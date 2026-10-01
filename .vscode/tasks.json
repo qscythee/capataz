@@ -1,0 +1,86 @@
+// See https://go.microsoft.com/fwlink/?LinkId=733558
+// for the documentation about the tasks.json format
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "shell",
+			"label": "build extension",
+			"command": "npm",
+			"windows": { "command": "npm.cmd" },
+			"args": ["run", "compile"],
+			"problemMatcher": "$tsc",
+			"group": "build"
+		},
+		{
+			"type": "process",
+			"label": "launch extension host",
+			"dependsOn": ["build extension"],
+			"dependsOrder": "sequence",
+			"command": "node",
+			"args": [
+				"${workspaceFolder}/scripts/launch-debug-host.mjs",
+				"${execPath}",
+				"${workspaceFolder}"
+			],
+			"problemMatcher": []
+		},
+		{
+            "label": "watch",
+            "dependsOn": [
+                "npm: watch:tsc",
+                "npm: watch:esbuild"
+            ],
+            "presentation": {
+                "reveal": "never"
+            },
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            }
+        },
+        {
+            "type": "npm",
+            "script": "watch:esbuild",
+            "group": "build",
+            "problemMatcher": "$esbuild-watch",
+            "isBackground": true,
+            "label": "npm: watch:esbuild",
+            "presentation": {
+                "group": "watch",
+                "reveal": "never"
+            }
+        },
+		{
+            "type": "npm",
+            "script": "watch:tsc",
+            "group": "build",
+            "problemMatcher": "$tsc-watch",
+            "isBackground": true,
+            "label": "npm: watch:tsc",
+            "presentation": {
+                "group": "watch",
+                "reveal": "never"
+            }
+        },
+		{
+			"type": "npm",
+			"script": "watch-tests",
+			"problemMatcher": "$tsc-watch",
+			"isBackground": true,
+			"presentation": {
+				"reveal": "never",
+				"group": "watchers"
+			},
+			"group": "build"
+		},
+		{
+			"label": "tasks: watch-tests",
+			"dependsOn": [
+				"npm: watch",
+				"npm: watch-tests"
+			],
+			"problemMatcher": []
+		}
+	]
+}

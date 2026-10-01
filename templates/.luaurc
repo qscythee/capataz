@@ -1,0 +1,7 @@
+{
+  "aliases": {
+    "Core": "src/Core/",
+    "Systems": "src/Systems/"
+  },
+  "languageMode": "strict"
+}
