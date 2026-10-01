@@ -20,5 +20,5 @@ export interface CapatazConfig {
 export const CONFIG_FILE_NAME = 'capataz.config.json';
 
 export function defaultSystemsDir(config: CapatazConfig): string {
-	return config.systemsDir ?? 'src/Systems';
+	return (config.systemsDir ?? 'src/Systems').replace(/\\/g, '/').replace(/\/$/, '');
 }

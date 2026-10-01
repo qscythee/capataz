@@ -228,16 +228,19 @@ function CustomRequirer.new(config: Config)
 
       return function(module: Instance | string)
          if typeof(module) == "Instance" then
+            -- capataz-ignore dynamic-require: runtime Instance passthrough.
             return robloxRequire(module)
          end
 
          if type(module) == "string" then
             if string.sub(module, 1, 1) == "@" then
                local resolved = resolveAtPath(context, module)
+               -- capataz-ignore dynamic-require: runtime alias resolution.
                return robloxRequire(resolved)
             end
 
             local resolved = resolveRelativePath(context, module)
+            -- capataz-ignore dynamic-require: runtime relative resolution.
             return robloxRequire(resolved)
          end
 

@@ -1,7 +1,8 @@
 import * as vscode from 'vscode';
 import { defaultSystemsDir } from '../config';
 import { ensureCapatazConfig } from '../configLoader';
-import { generateProject } from '../generateProject';
+import { newSystem } from '../core/project';
+import { editorFs } from '../editorFs';
 
 export async function runNewSystem(outputChannel: vscode.OutputChannel): Promise<void> {
 	const gate = await ensureCapatazConfig();
@@ -37,12 +38,7 @@ export async function runNewSystem(outputChannel: vscode.OutputChannel): Promise
 		return;
 	}
 
-	for (const subdir of ['Client', 'Server', 'Shared']) {
-		const dirUri = vscode.Uri.joinPath(systemRoot, subdir);
-		await vscode.workspace.fs.createDirectory(dirUri);
-		await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(dirUri, '.gitkeep'), new Uint8Array());
-	}
-
-	await generateProject(gate.root, gate.config, outputChannel);
+	await newSystem(editorFs(gate.root), gate.config, name);
+	outputChannel.appendLine('Wrote default.project.json');
 	vscode.window.showInformationMessage(`Capataz: created System '${name}'.`);
 }

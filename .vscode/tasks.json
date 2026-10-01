@@ -15,6 +15,7 @@
 		{
 			"type": "process",
 			"label": "launch extension host",
+			"isBackground": true,
 			"dependsOn": ["build extension"],
 			"dependsOrder": "sequence",
 			"command": "node",
@@ -23,6 +24,21 @@
 				"${execPath}",
 				"${workspaceFolder}"
 			],
+			"problemMatcher": {
+				"owner": "capataz-debug",
+				"pattern": { "regexp": "^(.*):(\\d+):(\\d+): (.*)$", "file": 1, "line": 2, "column": 3, "message": 4 },
+				"background": {
+					"activeOnStart": true,
+					"beginsPattern": "^Capataz debug host starting",
+					"endsPattern": "^Capataz debug host ready"
+				}
+			}
+		},
+		{
+			"type": "process",
+			"label": "stop extension host",
+			"command": "node",
+			"args": ["${workspaceFolder}/scripts/launch-debug-host.mjs", "--stop", "${workspaceFolder}"],
 			"problemMatcher": []
 		},
 		{

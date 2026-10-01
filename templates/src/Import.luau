@@ -13,6 +13,7 @@ local ancestors: { [string]: Instance } = {
 if not RunService:IsClient() then
    local ServerScriptService = game:GetService("ServerScriptService")
 
+   -- capataz-ignore dynamic-requirer: canonical Import factory routes server aliases.
    return CustomRequirer.new({
       Ancestors = ancestors,
       CaseSensitive = true,

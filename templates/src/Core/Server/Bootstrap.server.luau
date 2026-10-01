@@ -1,15 +1,29 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerScriptService = game:GetService("ServerScriptService")
 
-local Nexus = require(ReplicatedStorage.Packages.Nexus)
-
-Nexus.RegisterProvidersIn(script.Parent :: Folder, Nexus.Predicates.IsService)
-Nexus.RegisterProvidersIn(ServerScriptService.Systems, Nexus.Predicates.IsService)
-
-Nexus.Start()
-   :andThen(function()
-      print("Nexus started successfully!")
-   end)
-   :catch(function(err)
-      warn(`Nexus failed to start: {err}`)
-   end)
+local services = {}
+for _, root in { ServerScriptService.Core.Server, ServerScriptService.Systems } do
+   for _, module in root:GetDescendants() do
+      if module:IsA("ModuleScript") and module.Name:match("Service$") then
+         -- capataz-ignore dynamic-require: bootstrap discovers services by suffix.
+         table.insert(services, { module = module, value = require(module) })
+      end
+   end
+end
+table.sort(services, function(a, b)
+   local aPriority, bPriority = a.value.Priority or 0, b.value.Priority or 0
+   if aPriority == bPriority then
+      return a.module:GetFullName() < b.module:GetFullName()
+   end
+   return aPriority > bPriority
+end)
+for _, service in services do
+   if type(service.value.Init) == "function" then
+      service.value.Init()
+   end
+end
+for _, service in services do
+   if type(service.value.Start) == "function" then
+      service.value.Start()
+   end
+end

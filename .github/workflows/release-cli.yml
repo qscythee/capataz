@@ -1,0 +1,67 @@
+name: Release Capataz CLI
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - runner: windows-latest
+            target: windows-x86_64
+          - runner: ubuntu-latest
+            target: linux-x86_64
+          - runner: macos-latest
+            target: macos-aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.18.0'
+          cache: npm
+      - run: npm ci
+      - run: npm run compile
+      - run: npm run test:unit
+      - run: npm run package:cli
+      - name: Smoke test standalone executable and embedded templates
+        shell: bash
+        run: |
+          binary=./dist/capataz
+          if [ "$RUNNER_OS" = Windows ]; then binary=./dist/capataz.exe; fi
+          mkdir -p out/standalone-smoke
+          "$binary" init --root out/standalone-smoke
+          "$binary" check --root out/standalone-smoke --strict
+          "$binary" project check --root out/standalone-smoke
+      - name: Archive Windows executable
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -LiteralPath dist/capataz.exe -DestinationPath dist/capataz-${{ matrix.target }}.zip
+      - name: Archive Unix executable
+        if: runner.os != 'Windows'
+        run: tar -czf dist/capataz-${{ matrix.target }}.tar.gz -C dist capataz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: capataz-${{ matrix.target }}
+          path: |
+            dist/capataz-*.zip
+            dist/capataz-*.tar.gz
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: capataz-*
+          merge-multiple: true
+          path: artifacts
+      - name: Publish tagged binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" artifacts/* --repo "$GITHUB_REPOSITORY" --generate-notes

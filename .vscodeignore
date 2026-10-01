@@ -8,6 +8,12 @@ node_modules/**
 src/**
 project-example/**
 debug.log
+.github/**
+dist/cli.cjs
+dist/capataz*
+.github/**
+dist/cli.cjs
+dist/capataz*
 !templates/**
 .gitignore
 .yarnrc

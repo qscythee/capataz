@@ -1,17 +1,15 @@
 import * as vscode from 'vscode';
 import { CapatazConfig, CONFIG_FILE_NAME } from './config';
+import { readConfig as readProjectConfig } from './core/project';
+import { editorFs } from './editorFs';
 
 export function configUri(workspaceRoot: vscode.Uri): vscode.Uri {
 	return vscode.Uri.joinPath(workspaceRoot, CONFIG_FILE_NAME);
 }
 
 export async function readConfig(workspaceRoot: vscode.Uri): Promise<CapatazConfig | undefined> {
-	try {
-		const bytes = await vscode.workspace.fs.readFile(configUri(workspaceRoot));
-		return JSON.parse(Buffer.from(bytes).toString('utf8')) as CapatazConfig;
-	} catch {
-		return undefined;
-	}
+	const fs = editorFs(workspaceRoot);
+	return await fs.exists(CONFIG_FILE_NAME) ? readProjectConfig(fs) : undefined;
 }
 
 export function getWorkspaceRoot(): vscode.Uri | undefined {
@@ -30,7 +28,9 @@ export async function ensureCapatazConfig(): Promise<{ root: vscode.Uri; config:
 		return undefined;
 	}
 
-	const config = await readConfig(root);
+	let config: CapatazConfig | undefined;
+	try { config = await readConfig(root); }
+	catch (error) { vscode.window.showErrorMessage(`Capataz: ${(error as Error).message}`); return undefined; }
 	if (!config) {
 		const choice = await vscode.window.showErrorMessage(
 			`Capataz: no ${CONFIG_FILE_NAME} found at the workspace root.`,
