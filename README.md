@@ -46,6 +46,10 @@ Server → Client is an enforced architecture rule even when Client modules are 
 
 VS Code reports errors in the Problems panel and refreshes on unsaved edits, source changes, and config changes. **Capataz: Check Runtime Boundaries** refreshes manually. Each workspace folder opts in through `capataz.config.json`. CI uses the same checker through `capataz check`.
 
+Live checks debounce edits by 250 ms and cache each workspace's module index and source text. Ordinary edits analyze only changed files; unchanged save notifications skip analysis, and diagnostics on other files stay visible. Newer events cancel obsolete scans between filesystem operations and file batches, and scans run serially. Closing an unsaved document checks its disk contents again.
+
+Startup, explicit checks, source creation/deletion/renames, and changes to metadata, `.luaurc`, Capataz config, or Rojo project files rebuild the index and recheck the workspace, including unresolved imports. Removing the opt-in config clears the workspace's lint diagnostics. Imported source contents do not require rechecking callers because this analyzer does not infer exported values across files. CLI checks still scan the full project. Individual file analysis remains synchronous, so exceptionally large or complex files can still occupy the extension host while being analyzed.
+
 The checker tokenizes Luau and tracks scoped bindings. It recognizes the canonical `src/Import.luau` factory and `src/Core/Shared/CustomRequirer/init.luau`, regardless of local variable names:
 
 ```luau

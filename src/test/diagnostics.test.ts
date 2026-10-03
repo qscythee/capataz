@@ -26,8 +26,20 @@ suite('Capataz editor boundary diagnostics', () => {
 			await replace(prefix + 'return r("@Systems/CounterSystem/Server/CounterService")');
 			await waitFor(() => vscode.languages.getDiagnostics(uri).some(d => d.source === 'Capataz' && d.code === 'cross-boundary' && d.severity === vscode.DiagnosticSeverity.Error));
 			assert.ok(document.isDirty, 'The checker must see unsaved changes');
+			const other = vscode.Uri.joinPath(root, 'src/Systems/CounterSystem/Client/OtherBoundaryTest.luau');
+			await vscode.workspace.fs.writeFile(other, Buffer.from(prefix + 'return r("@Systems/CounterSystem/Server/CounterService")'));
+			await waitFor(() => vscode.languages.getDiagnostics(other).some(d => d.source === 'Capataz' && d.code === 'cross-boundary'));
 			await replace(prefix + 'return r("@Systems/CounterSystem/Shared/Counter")');
 			await waitFor(() => !vscode.languages.getDiagnostics(uri).some(d => d.source === 'Capataz'));
+			assert.ok(vscode.languages.getDiagnostics(other).some(d => d.source === 'Capataz' && d.code === 'cross-boundary'), 'Editing one file must preserve diagnostics on another');
+			const target = vscode.Uri.joinPath(root, 'src/Systems/CounterSystem/Shared/Counter.luau');
+			const targetSource = await vscode.workspace.fs.readFile(target);
+			await vscode.workspace.fs.delete(target);
+			await waitFor(() => vscode.languages.getDiagnostics(uri).some(d => d.source === 'Capataz' && d.code === 'unresolved-require'));
+			await vscode.workspace.fs.writeFile(target, targetSource);
+			await waitFor(() => !vscode.languages.getDiagnostics(uri).some(d => d.source === 'Capataz'));
+			await vscode.workspace.fs.delete(other);
+			await waitFor(() => !vscode.languages.getDiagnostics(other).some(d => d.source === 'Capataz'));
 			await document.save();
 			await vscode.workspace.fs.delete(uri);
 		} finally { output.dispose(); }
