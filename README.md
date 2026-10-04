@@ -74,6 +74,10 @@ local controller = require(module)
 
 `dynamic-requirer` supports the same directive. Boundary diagnostics and resolution **errors cannot be suppressed**. Bundled factories and bootstraps annotate their intentional dynamic operations.
 
+## Lint timing in VS Code
+
+Set **Capataz: Lint Run** in VS Code Settings to `onChange` (the default) or `onSave`. With `"capataz.lint.run": "onSave"`, diagnostics use saved contents and remain unchanged while you type. Saves and external disk changes update them; structural/configuration changes and manual checks still run using saved contents. The setting supports user, workspace, and workspace-folder configuration and takes effect without restarting the extension.
+
 ## Standalone executable and Rokit distribution
 
 ```sh

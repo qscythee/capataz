@@ -18,6 +18,22 @@
     "capataz": "./dist/cli.cjs"
   },
   "contributes": {
+    "configuration": {
+      "title": "Capataz",
+      "properties": {
+        "capataz.lint.run": {
+          "type": "string",
+          "enum": ["onChange", "onSave"],
+          "enumDescriptions": [
+            "Update diagnostics while editing, after a short pause.",
+            "Check saved file contents. Unsaved edits do not update diagnostics."
+          ],
+          "default": "onChange",
+          "scope": "resource",
+          "description": "When Capataz updates Luau import and runtime boundary diagnostics. Project structure and configuration changes always trigger checks."
+        }
+      }
+    },
     "commands": [
       {
         "command": "capataz.check",

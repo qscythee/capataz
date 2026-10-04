@@ -7,6 +7,7 @@ import { IncrementalLinter } from './lint/incremental';
 interface Pending { rebuild: boolean; full: boolean; files: Set<string> }
 interface WorkspaceLint { folder: vscode.WorkspaceFolder; linter: IncrementalLinter; pending?: Pending }
 const pending = (): Pending => ({ rebuild: false, full: false, files: new Set() });
+const lintOnChange = (uri: vscode.Uri): boolean => vscode.workspace.getConfiguration('capataz', uri).get<string>('lint.run', 'onChange') !== 'onSave';
 
 export function registerDiagnostics(context: vscode.ExtensionContext, output: vscode.OutputChannel): void {
 	const collection = vscode.languages.createDiagnosticCollection('capataz');
@@ -35,13 +36,14 @@ export function registerDiagnostics(context: vscode.ExtensionContext, output: vs
 				state.pending = undefined;
 				try {
 					const documents = new Map<string, vscode.TextDocument>();
+					const useUnsaved = lintOnChange(state.folder.uri);
 					for (const document of vscode.workspace.textDocuments) {
 						if (vscode.workspace.getWorkspaceFolder(document.uri)?.uri.toString() === state.folder.uri.toString()) {
 							documents.set(document.uri.path.slice(state.folder.uri.path.length + 1), document);
 						}
 					}
 					// Fetch text lazily: an edit must not copy every other open document.
-					const updates = await state.linter.refresh(request, { get: file => documents.get(file)?.getText() }, controller.signal);
+					const updates = await state.linter.refresh(request, { get: file => useUnsaved ? documents.get(file)?.getText() : undefined }, controller.signal);
 					controller.signal.throwIfAborted();
 					collection.delete(vscode.Uri.joinPath(state.folder.uri, CONFIG_FILE_NAME));
 					for (const [file, analysis] of updates) {
@@ -95,8 +97,18 @@ export function registerDiagnostics(context: vscode.ExtensionContext, output: vs
 	const watcher = vscode.workspace.createFileSystemWatcher('**/{*.luau,*.lua,*.meta.json,.luaurc,capataz.config.json,*.project.json}');
 	context.subscriptions.push(collection, watcher,
 		watcher.onDidCreate(uri => enqueue(uri, true)), watcher.onDidChange(uri => enqueue(uri)), watcher.onDidDelete(uri => enqueue(uri, true)),
-		vscode.workspace.onDidChangeTextDocument(event => { if (/\.lua[u]?$/.test(event.document.uri.path)) { enqueue(event.document.uri); } }),
-		vscode.workspace.onDidCloseTextDocument(document => { if (/\.lua[u]?$/.test(document.uri.path)) { enqueue(document.uri); } }),
+		vscode.workspace.onDidChangeTextDocument(event => { if (/\.lua[u]?$/.test(event.document.uri.path) && lintOnChange(event.document.uri)) { enqueue(event.document.uri); } }),
+		vscode.workspace.onDidSaveTextDocument(document => { if (/\.lua[u]?$/.test(document.uri.path)) { enqueue(document.uri); } }),
+		vscode.workspace.onDidCloseTextDocument(document => { if (/\.lua[u]?$/.test(document.uri.path) && lintOnChange(document.uri)) { enqueue(document.uri); } }),
+		vscode.workspace.onDidChangeConfiguration(event => {
+			let affected = false;
+			for (const state of workspaces.values()) {
+				if (event.affectsConfiguration('capataz.lint.run', state.folder.uri)) {
+					const request = state.pending ??= pending(); request.full = true; affected = true;
+				}
+			}
+			if (affected) { schedule(); }
+		}),
 		vscode.workspace.onDidChangeWorkspaceFolders(syncWorkspaces),
 		vscode.commands.registerCommand('capataz.check', async () => {
 			for (const state of workspaces.values()) { const request = state.pending ??= pending(); request.rebuild = true; request.full = true; }

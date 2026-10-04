@@ -44,4 +44,47 @@ suite('Capataz editor boundary diagnostics', () => {
 			await vscode.workspace.fs.delete(uri);
 		} finally { output.dispose(); }
 	});
+
+	test('save mode ignores unsaved edits, handles saves, and switches modes without restarting', async function () {
+		this.timeout(15000);
+		const root = vscode.workspace.workspaceFolders?.[0]?.uri;
+		assert.ok(root);
+		const configuration = vscode.workspace.getConfiguration('capataz', root);
+		const previous = configuration.inspect<string>('lint.run')?.workspaceFolderValue;
+		const uri = vscode.Uri.joinPath(root, 'src/Systems/CounterSystem/Client/SaveBoundaryTest.luau');
+		const prefix = 'local r = require(game:GetService("ReplicatedStorage").Import)(script)\n';
+		const hasError = () => vscode.languages.getDiagnostics(uri).some(d => d.source === 'Capataz' && d.code === 'cross-boundary');
+		const waitFor = async (predicate: () => boolean) => {
+			const deadline = Date.now() + 6000;
+			while (!predicate() && Date.now() < deadline) { await new Promise(resolve => setTimeout(resolve, 50)); }
+			assert.ok(predicate(), 'Expected diagnostic update before timeout');
+		};
+		try {
+			await configuration.update('lint.run', 'onSave', vscode.ConfigurationTarget.WorkspaceFolder);
+			await vscode.workspace.fs.writeFile(uri, Buffer.from('return {}\n'));
+			const document = await vscode.workspace.openTextDocument(uri);
+			const replace = async (side: string) => {
+				const edit = new vscode.WorkspaceEdit();
+				edit.replace(uri, new vscode.Range(document.positionAt(0), document.positionAt(document.getText().length)), prefix + `return r("@Systems/CounterSystem/${side}/${side === 'Server' ? 'CounterService' : 'Counter'}")`);
+				assert.ok(await vscode.workspace.applyEdit(edit));
+			};
+			await vscode.commands.executeCommand('capataz.check');
+			await replace('Server');
+			await new Promise(resolve => setTimeout(resolve, 600));
+			assert.ok(document.isDirty); assert.ok(!hasError(), 'Typing must not publish unsaved errors in save mode');
+			await vscode.commands.executeCommand('capataz.check');
+			assert.ok(!hasError(), 'Manual full checks must also use saved contents in save mode');
+			assert.ok(await document.save()); await waitFor(hasError);
+			await replace('Shared'); await new Promise(resolve => setTimeout(resolve, 600));
+			assert.ok(hasError(), 'Unsaved corrections must preserve the saved diagnostic');
+			await configuration.update('lint.run', 'onChange', vscode.ConfigurationTarget.WorkspaceFolder);
+			await waitFor(() => !hasError());
+			await configuration.update('lint.run', 'onSave', vscode.ConfigurationTarget.WorkspaceFolder);
+			await waitFor(hasError);
+			assert.ok(await document.save()); await waitFor(() => !hasError());
+		} finally {
+			await configuration.update('lint.run', previous, vscode.ConfigurationTarget.WorkspaceFolder);
+			await vscode.workspace.fs.delete(uri);
+		}
+	});
 });
