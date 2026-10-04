@@ -86,6 +86,9 @@ test('Capataz line directives suppress their matching rule on the comment and fo
 	assert.equal(check('-- Capataz(dynamic-requirer) different rule\nrequire(getTarget())').diagnostics[0]?.code, 'dynamic-require');
 	assert.equal(check('local text = "-- Capataz(dynamic-require) not a comment"\nrequire(getTarget())').diagnostics[0]?.code, 'dynamic-require');
 });
+test('Capataz line directives work with CRLF line endings', () => {
+	assert.equal(check('-- Capataz(dynamic-require) reason\r\nrequire(getTarget())\r\n').diagnostics.length, 0);
+});
 test('config can turn off dynamic-require warnings without disabling other warning categories', () => {
 	const source = 'local C = require(game:GetService("ReplicatedStorage").Core.Shared.CustomRequirer)\nlocal r = C.new({Ancestors = {}, RootResolver = function() return game:GetService("ServerScriptService"), 0 end})(script)\nr("@any/Module")\nrequire(getTarget())';
 	const disabledIndex = { ...index, config: { ...index.config, lint: { rules: { 'dynamic-require': 'off' as const } } } };

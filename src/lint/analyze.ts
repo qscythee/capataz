@@ -266,7 +266,7 @@ export function analyzeSource(source: string, index: ProjectIndex, caller: Modul
 	reader.block();
 	const disabledLines = new Map<number, Set<string>>();
 	for (const comment of comments) {
-		const directive = /^--\s*Capataz\(([a-z-]+)\)(?:\s+.*)?$/i.exec(comment.text);
+		const directive = /^--\s*Capataz\(([a-z-]+)\)(?:\s+.*)?$/i.exec(comment.text.trimEnd());
 		if (directive) {
 			for (const line of [comment.line, comment.line + 1]) {
 				const rules = disabledLines.get(line) ?? new Set<string>();
