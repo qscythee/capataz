@@ -48,16 +48,23 @@ suite('Capataz init', () => {
 		assert.strictEqual(project.tree.ServerScriptService.Systems.CounterSystem.Server.$path, 'src/Systems/CounterSystem/Server');
 		assert.match(await read(root, 'src/Import.luau'), /RootResolver/);
 		assert.match(await read(root, 'src/Core/Shared/CustomRequirer/init.luau'), /CustomRequirer\.new/);
-		assert.match(await read(root, 'src/Core/Client/Bootstrap.client.luau'), /Controller/);
+		const clientBootstrap = await read(root, 'src/Core/Client/Bootstrap.client.luau');
+		assert.match(clientBootstrap, /Controller/);
+		assert.match(clientBootstrap, /controller\.Start\(\)/);
+		assert.match(clientBootstrap, /GetDescendants\(\)/);
+		const serverBootstrap = await read(root, 'src/Core/Server/Bootstrap.server.luau');
+		assert.match(serverBootstrap, /Service/);
+		assert.match(serverBootstrap, /service\.Start\(\)/);
+		assert.match(serverBootstrap, /GetDescendants\(\)/);
 		assert.deepStrictEqual(await initializeProject(root, output, extensionUri), []);
 	});
 
 	test('extends an existing src and preserves project settings and system files', async () => {
 		await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(root, 'src/Systems/GreetingSystem/Client'));
-		await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(root, 'src/Client'));
+		await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(root, 'src/Core/Client'));
 		await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(root, 'src/Core/Server'));
 		await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(root, 'src/Systems/GreetingSystem/Client/OwnController.luau'), Buffer.from('return {}\n'));
-		await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(root, 'src/Client/Bootstrap.client.luau'), Buffer.from('-- own client startup\n'));
+		await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(root, 'src/Core/Client/Bootstrap.client.luau'), Buffer.from('-- own client startup\n'));
 		await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(root, 'src/Core/Server/Bootstrap.server.luau'), Buffer.from('-- own server startup\n'));
 		const originalProject = {
 			name: 'MyGame',
@@ -89,7 +96,6 @@ suite('Capataz init', () => {
 		assert.strictEqual(project.tree.ServerScriptService.Systems.CounterSystem.Server.$path, 'src/Systems/CounterSystem/Server');
 		assert.strictEqual(await read(root, 'src/Core/Client/Bootstrap.client.luau'), '-- own client startup\n');
 		assert.strictEqual(await read(root, 'src/Core/Server/Bootstrap.server.luau'), '-- own server startup\n');
-		await assert.rejects(async () => vscode.workspace.fs.stat(vscode.Uri.joinPath(root, 'src/Client')));
 	});
 
 	test('adds bootstraps when an existing src has no Core or client folder', async () => {

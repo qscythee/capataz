@@ -22,45 +22,16 @@ function addMissing(target: CapatazTreeNode, defaults: CapatazTreeNode): void {
 }
 export interface Templates { read(relative: string): Promise<string>; entries(relative: string): Promise<[string, boolean][]> }
 
-async function migrateLegacyClientDirectory(fs: ProjectFs): Promise<void> {
-	const source = 'src/Client';
-	const target = 'src/Core/Client';
-	if (!(await fs.exists(source))) { return; }
-	const move = async (from: string, to: string): Promise<void> => {
-		for (const [name, isDirectory] of await fs.entries(from)) {
-			const sourcePath = `${from}/${name}`;
-			const targetPath = `${to}/${name}`;
-			if (isDirectory) {
-				await fs.mkdir(targetPath);
-				await move(sourcePath, targetPath);
-			} else {
-				if (await fs.exists(targetPath)) {
-					if (await fs.read(sourcePath) !== await fs.read(targetPath)) {
-						throw new Error(`Cannot migrate '${sourcePath}' to '${targetPath}': both files exist with different contents. Resolve the conflict and run capataz init again.`);
-					}
-				} else {
-					await fs.write(targetPath, await fs.read(sourcePath));
-				}
-				await fs.remove(sourcePath);
-			}
-		}
-	};
-	await fs.mkdir(target);
-	await move(source, target);
-	await fs.remove(source);
-}
-
 export async function initialize(fs: ProjectFs, templates: Templates): Promise<string[]> {
 	const hasConfig = await fs.exists(CONFIG_FILE_NAME);
 	let config: CapatazConfig;
-	if (hasConfig) { config = await readConfig(fs, true); }
+	if (hasConfig) { config = await readConfig(fs); }
 	else if (await fs.exists('default.project.json')) {
 		config = JSON.parse(await fs.read('default.project.json'));
 		if (!config.tree || typeof config.tree !== 'object') { throw new Error('Existing default.project.json needs a Rojo tree object.'); }
 		addMissing(config.tree, starterConfig.tree); config.systemsDir = 'src/Systems'; config.emitLegacyScripts = false;
 	} else { config = structuredClone(starterConfig); }
 	if ((config.systemsDir ?? 'src/Systems') !== 'src/Systems') { throw new Error('Init requires systemsDir to be src/Systems.'); }
-	await migrateLegacyClientDirectory(fs);
 	const created: string[] = [];
 	for (const relative of [...directories, ...examples.flatMap(system => parts.map(part => `src/Systems/${system}/${part}`))]) {
 		if (!(await fs.exists(relative))) { await fs.mkdir(relative); created.push(relative + '/'); }

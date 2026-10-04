@@ -6,6 +6,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { nodeFs, ProjectFs } from '../core/fs';
 import { starterConfig } from '../core/init';
+import { configFileText } from '../core/project';
 import { IncrementalLinter } from '../lint/incremental';
 import { checkProject } from '../lint/check';
 
@@ -18,7 +19,7 @@ async function fixture(t: TestContext) {
 	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'capataz-incremental-'));
 	t.after(() => fs.rm(root, { recursive: true, force: true }));
 	const project = nodeFs(root);
-	await project.write('capataz.config.json', JSON.stringify(starterConfig));
+	await project.write('capataz.config.json', configFileText(starterConfig));
 	await project.write('src/Import.luau', 'return {}');
 	await project.write(client, source('Server'));
 	await project.write(shared, 'return {}');
@@ -76,7 +77,7 @@ test('alias and mount changes invalidate previously valid importers', async t =>
 	await project.write('.luaurc', '{"aliases":{"Test":"src/Systems/TestSystem/Server"}}');
 	assert.equal((await linter.refresh({ rebuild: true })).get(client)?.diagnostics[0]?.code, 'cross-boundary');
 	const config = structuredClone(starterConfig); delete (config.tree.ReplicatedStorage as CapatazTreeNode).Import;
-	await project.write('capataz.config.json', JSON.stringify(config)); await project.write(client, source('Shared'));
+	await project.write('capataz.config.json', configFileText(config)); await project.write(client, source('Shared'));
 	assert.ok((await linter.refresh({ rebuild: true })).get(client)?.diagnostics.some(d => d.code === 'unresolved-require'));
 });
 

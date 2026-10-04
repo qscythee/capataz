@@ -55,8 +55,6 @@ In `capataz.config.json`, Rojo project settings are nested under `project`, so a
 }
 ```
 
-Flat configs from earlier Capataz versions remain readable; running `capataz init` migrates them to this nested format.
-
 ### System routing
 
 The default route names are `Client` and `Shared` to `ReplicatedStorage`, and `Server` to `ServerScriptService`. Route folder names are matched without case sensitivity, so a `client` folder is mounted as `Client` in the generated instance tree; system names and module paths retain their normal case-sensitive matching. Recognized Roblox service names also work directly as route folders; for example, `ReplicatedFirst` maps to `ReplicatedFirst.Systems.<Name>System.ReplicatedFirst`. Map other services or custom folder names explicitly with `systemRoutes`:
@@ -75,7 +73,7 @@ Then put the routed modules in `src/Systems/<Name>System/Bootstrap/`. Capataz mo
 
 `CustomRequirer` resolves route aliases to cached service `Systems` roots. Its optional case-insensitive child lookup also indexes children per parent instead of scanning them on every miss; exact-case mode stays on Roblox's direct `FindFirstChild` path. Module execution caching remains Roblox's built-in `require` behavior.
 
-Capataz requires `emitLegacyScripts: false`. This lets Rojo use modern `Script` instances with suffix-derived `RunContext`; the `.client.luau` bootstrap under `src/Core/Client` is a client-context Script mounted at `ReplicatedStorage.Core.Client`. `src/Core/First` is mounted at `ReplicatedFirst.Core.First`. Init migrates old `src/Client` content into `src/Core/Client` without overwriting files; conflicting files are reported for manual resolution. Explicit system routes, such as a folder mapped to `ReplicatedFirst`, remain available.
+Capataz requires `emitLegacyScripts: false`. This lets Rojo use modern `Script` instances with suffix-derived `RunContext`; the `.client.luau` bootstrap under `src/Core/Client` is a client-context Script mounted at `ReplicatedStorage.Core.Client`. `src/Core/First` is mounted at `ReplicatedFirst.Core.First`. Explicit system routes, such as a folder mapped to `ReplicatedFirst`, remain available.
 
 ## Runtime boundary linting
 
@@ -153,7 +151,7 @@ To check `dev` against a real installed Rojo executable, run `npm run compile-te
 
 ## Start a project
 
-Open the Rojo project root in VS Code, then run **Capataz: Init** from the Command Palette. It creates `capataz.config.json`, the Rojo project file, `src/Core`, `src/Systems`, `src/Import.luau`, the custom requirer, `.luaurc`, and two small example systems: `GreetingSystem` and `CounterSystem`. A new source tree also gets client and server bootstrap scripts that start modules ending in `Controller` and `Service`.
+Open the Rojo project root in VS Code, then run **Capataz: Init** from the Command Palette. It creates `capataz.config.json`, the Rojo project file, `src/Core`, `src/Systems`, `src/Import.luau`, the custom requirer, `.luaurc`, and two small example systems: `GreetingSystem` and `CounterSystem`. The client and server bootstrap templates find descendant ModuleScripts ending in `Controller` and `Service` under their respective `Systems` trees, require them, then call each returned table's `Start()` method. Modules without a `Start` method produce a warning. They load all matching modules before starting any, so `Start` implementations can rely on other modules having been required.
 
 Package folders and aliases are left to the project's chosen package manager. Init does not require `Packages` or `ServerPackages`.
 

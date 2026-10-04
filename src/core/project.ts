@@ -18,20 +18,15 @@ const ROBLOX_SERVICES = new Set([
 	'TweenService', 'UserInputService', 'VoiceChatService',
 ]);
 
-export async function readConfig(fs: ProjectFs, normalizeLegacyScripts = false): Promise<CapatazConfig> {
+export async function readConfig(fs: ProjectFs): Promise<CapatazConfig> {
 	if (!(await fs.exists(CONFIG_FILE_NAME))) { throw new Error(`No ${CONFIG_FILE_NAME}; run capataz init first.`); }
-	const raw = JSON.parse(await fs.read(CONFIG_FILE_NAME)) as CapatazConfig & { project?: Omit<CapatazConfig, 'systemRoutes' | 'lint'> };
-	const config: CapatazConfig = raw.project && typeof raw.project === 'object'
-		? { ...raw.project, ...(raw.systemRoutes !== undefined ? { systemRoutes: raw.systemRoutes } : {}), ...(raw.lint !== undefined ? { lint: raw.lint } : {}) }
-		: raw;
+	const raw = JSON.parse(await fs.read(CONFIG_FILE_NAME)) as CapatazConfigFile;
+	if (!raw || typeof raw.project !== 'object' || !raw.project) { throw new Error(`${CONFIG_FILE_NAME}: missing 'project' object.`); }
+	const config: CapatazConfig = { ...raw.project, ...(raw.systemRoutes !== undefined ? { systemRoutes: raw.systemRoutes } : {}), ...(raw.lint !== undefined ? { lint: raw.lint } : {}) };
 	if (!config || !config.tree || typeof config.tree !== 'object' || !config.tree.ReplicatedStorage || typeof config.tree.ReplicatedStorage !== 'object' || !config.tree.ServerScriptService || typeof config.tree.ServerScriptService !== 'object') {
 		throw new Error(`${CONFIG_FILE_NAME}: tree must define ReplicatedStorage and ServerScriptService.`);
 	}
-	const needsModernScripts = config.emitLegacyScripts !== false;
-	if (needsModernScripts) {
-		if (!normalizeLegacyScripts) { throw new Error(`${CONFIG_FILE_NAME}: emitLegacyScripts must be false. Run capataz init to migrate to modern script RunContext.`); }
-		config.emitLegacyScripts = false;
-	}
+	if (config.emitLegacyScripts !== false) { throw new Error(`${CONFIG_FILE_NAME}: project.emitLegacyScripts must be false.`); }
 	if (config.systemsDir !== undefined && typeof config.systemsDir !== 'string') { throw new Error('systemsDir must be a string.'); }
 	validateSystemRoutes(config);
 	validateLintConfig(config);
@@ -135,23 +130,6 @@ export async function buildProject(fs: ProjectFs, config: CapatazConfig): Promis
 	const firstRoot = replicatedFirst as CapatazTreeNode;
 	const firstCore = ((firstRoot.Core ??= { $className: 'Folder' })) as CapatazTreeNode;
 	firstCore.First = { $path: 'src/Core/First' };
-	const replicatedStorageCore = (tree.ReplicatedStorage as CapatazTreeNode).Core as CapatazTreeNode;
-	const legacyFirstMount = replicatedStorageCore.First;
-	if (legacyFirstMount && typeof legacyFirstMount === 'object' && legacyFirstMount.$path === 'src/Core/First') {
-		delete replicatedStorageCore.First;
-	}
-	const legacyClientMount = (tree.ReplicatedStorage as CapatazTreeNode).Client;
-	if (legacyClientMount && typeof legacyClientMount === 'object' && legacyClientMount.$path === 'src/Client') {
-		delete (tree.ReplicatedStorage as CapatazTreeNode).Client;
-	}
-	const starterPlayer = tree.StarterPlayer;
-	if (starterPlayer && typeof starterPlayer === 'object') {
-		const scripts = starterPlayer.StarterPlayerScripts;
-		if (scripts && typeof scripts === 'object' && scripts.$path === 'src/Client') {
-			delete starterPlayer.StarterPlayerScripts;
-			if (Object.keys(starterPlayer).every(key => key.startsWith('$'))) { delete tree.StarterPlayer; }
-		}
-	}
 	const routes = await projectRoutes(fs, config);
 	const routeSystems = new Map<string, CapatazTreeNode>();
 	for (const route of routes.values()) {

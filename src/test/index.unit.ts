@@ -80,28 +80,27 @@ test('config traversal is rejected, missing mounts are reported, and project com
 	assert.equal(projectTree.ReplicatedFirst.Core.First.$path, 'src/Core/First');
 	assert.equal(projectTree.ReplicatedStorage.Core.First, undefined);
 	assert.ok((await projectIssues(project, config)).some(issue => issue.includes('Missing')));
-	await project.write('capataz.config.json', JSON.stringify({ ...config, lint: { rules: { 'dynamic-require': 'disabled' } } }));
+	await project.write('capataz.config.json', configFileText({ ...config, lint: { rules: { 'dynamic-require': 'disabled' as never } } }));
 	await assert.rejects(readConfig(project), /must be 'off' or 'warn'/);
-	await project.write('capataz.config.json', JSON.stringify({ ...config, systemsDir: '../escape' }));
+	await project.write('capataz.config.json', configFileText({ ...config, systemsDir: '../escape' }));
 	await assert.rejects(readConfig(project), /inside the project/);
 	await assert.rejects(project.write('../escape/file', 'bad'), /escapes project root/);
 	const generated = JSON.parse(await project.read('default.project.json'));
 	await project.write('default.project.json', JSON.stringify({ tree: generated.tree, syncbackRules: generated.syncbackRules, emitLegacyScripts: generated.emitLegacyScripts }));
 	assert.ok(!(await projectIssues(project, config)).some(issue => issue.includes('stale')));
 });
-test('config files nest Rojo project settings and continue to read legacy flat settings', async t => {
+test('config files nest Rojo project settings and require the project object', async t => {
 	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'capataz-index-')); t.after(() => fs.rm(root, { recursive: true, force: true }));
 	const project = nodeFs(root);
 	const config = { ...structuredClone(starterConfig), name: 'Example', systemRoutes: { Bootstrap: 'ReplicatedFirst' }, lint: { rules: { 'dynamic-require': 'off' as const } } };
 	await project.write('capataz.config.json', configFileText(config));
 	const nested = JSON.parse(await project.read('capataz.config.json'));
 	assert.equal(nested.project.name, 'Example');
-	assert.equal(nested.project.emitLegacyScripts, false);
 	assert.equal(nested.project.systemsDir, 'src/Systems');
 	assert.deepEqual(nested.systemRoutes, config.systemRoutes);
 	assert.deepEqual(nested.lint, config.lint);
 	assert.equal(nested.tree, undefined);
 	assert.deepEqual(await readConfig(project), config);
 	await project.write('capataz.config.json', JSON.stringify(config));
-	assert.deepEqual(await readConfig(project), config);
+	await assert.rejects(readConfig(project), /missing 'project' object/);
 });

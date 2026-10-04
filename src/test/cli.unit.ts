@@ -76,27 +76,12 @@ test('init fills missing example contents from the checked-in templates without 
 		assert.equal(new Set(descriptionColumns).size, 1, `${name} descriptions should align`);
 	}
 });
-test('init migrates legacy flat config into the nested project shape without dropping settings', async t => {
+test('flat configs without a project object are rejected', async t => {
 	const root = await fixture(t);
-	assert.equal(run(root, 'init').status, 0);
-	const configPath = path.join(root, 'capataz.config.json');
-	const current = JSON.parse(await fs.readFile(configPath, 'utf8'));
-	const legacy = {
-		...current.project,
-		name: 'Existing project',
-		emitLegacyScripts: true,
-		systemRoutes: { Bootstrap: 'ReplicatedFirst' },
-		lint: { rules: { 'dynamic-require': 'off' } },
-	};
-	await fs.writeFile(configPath, JSON.stringify(legacy));
-	const initialized = run(root, 'init');
-	assert.equal(initialized.status, 0, initialized.stderr);
-	const migrated = JSON.parse(await fs.readFile(configPath, 'utf8'));
-	assert.equal(migrated.project.name, 'Existing project');
-	assert.equal(migrated.project.emitLegacyScripts, false);
-	assert.equal(migrated.project.systemsDir, 'src/Systems');
-	assert.deepEqual(migrated.systemRoutes, legacy.systemRoutes);
-	assert.deepEqual(migrated.lint, legacy.lint);
+	await fs.writeFile(path.join(root, 'capataz.config.json'), JSON.stringify({ emitLegacyScripts: false, tree: {} }));
+	const result = run(root, 'check');
+	assert.notEqual(result.status, 0);
+	assert.match(result.stderr, /missing 'project' object/);
 });
 test('system commands list, preview, create, detect stale project and remove safely', async t => {
 	const root = await fixture(t); run(root, 'init');
@@ -164,14 +149,13 @@ test('server-to-client advice warns without failing ordinary checks; strict chec
 });
 test('adoption preserves authored source, settings, packages and unrelated mounts', async t => {
 	const root = await fixture(t);
-	await fs.mkdir(path.join(root, 'src/Client'), { recursive: true });
-	await fs.writeFile(path.join(root, 'src/Client/Bootstrap.client.luau'), '-- mine');
-	await fs.writeFile(path.join(root, 'src/Client/CustomController.luau'), 'return { Start = function() end }');
+	await fs.mkdir(path.join(root, 'src/Core/Client'), { recursive: true });
+	await fs.writeFile(path.join(root, 'src/Core/Client/Bootstrap.client.luau'), '-- mine');
+	await fs.writeFile(path.join(root, 'src/Core/Client/CustomController.luau'), 'return { Start = function() end }');
 	await fs.writeFile(path.join(root, 'default.project.json'), JSON.stringify({ name: 'Existing', emitLegacyScripts: true, tree: { ReplicatedStorage: { Packages: { $path: 'Packages' } }, Workspace: { $className: 'Workspace' } } }));
 	assert.equal(run(root, 'init').status, 0);
 	assert.equal(await fs.readFile(path.join(root, 'src/Core/Client/Bootstrap.client.luau'), 'utf8'), '-- mine');
 	assert.equal(await fs.readFile(path.join(root, 'src/Core/Client/CustomController.luau'), 'utf8'), 'return { Start = function() end }');
-	await assert.rejects(fs.stat(path.join(root, 'src/Client')));
 	const project = JSON.parse(await fs.readFile(path.join(root, 'default.project.json'), 'utf8'));
 	assert.equal(project.name, 'Existing'); assert.equal(project.tree.ReplicatedStorage.Packages.$path, 'Packages');
 	assert.equal(project.tree.ReplicatedStorage.Core.Client.$path, 'src/Core/Client');
