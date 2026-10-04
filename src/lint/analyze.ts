@@ -1,4 +1,5 @@
 import * as path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { ModuleInfo, ProjectIndex, normalize, resolveCustom, resolveNative } from './index';
 import { Token, tokenize } from './tokens';
 
@@ -9,8 +10,12 @@ export interface Analysis { diagnostics: Diagnostic[]; dependencies: Dependency[
 type Value = { kind: 'unknown' | 'native' | 'factory' | 'custom' | 'requirer' | 'game' | 'instance' | 'string' | 'boolean' | 'table' | 'method' | 'union'; text?: string; fields?: Record<string, Value>; receiver?: Value; roots?: Record<string, string>; alternatives?: Value[]; caseSensitive?: boolean; unverified?: boolean };
 const unknown: Value = { kind: 'unknown' };
 function merge(values: Value[]): Value {
-	const unique = new Map(values.flatMap(v => v.kind === 'union' ? v.alternatives! : [v]).map(v => [JSON.stringify(v), v]));
-	return unique.size === 1 ? [...unique.values()][0] : { kind: 'union', alternatives: [...unique.values()] };
+	const unique: Value[] = [];
+	// Class tables can reference themselves through __index; compare without JSON serialization.
+	for (const value of values.flatMap(v => v.kind === 'union' ? v.alternatives! : [v])) {
+		if (!unique.some(existing => isDeepStrictEqual(existing, value))) { unique.push(value); }
+	}
+	return unique.length === 1 ? unique[0] : { kind: 'union', alternatives: unique };
 }
 const operators: Record<string, number> = { or: 1, and: 2, '==': 3, '~=': 3, '<': 3, '>': 3, '<=': 3, '>=': 3, '..': 4, '+': 5, '-': 5, '*': 6, '/': 6, '//': 6, '%': 6, '^': 7 };
 

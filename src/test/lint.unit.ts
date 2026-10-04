@@ -104,3 +104,35 @@ test('custom new honors case sensitivity and does not pretend arbitrary RootReso
 	const dynamic = 'local C = require(game:GetService("ReplicatedStorage").Core.Shared.CustomRequirer)\nlocal r = C.new({Ancestors = {}, RootResolver = function() return game:GetService("ServerScriptService"), 0 end})(script)\nr("@any/Module")';
 	assert.deepEqual(check(dynamic).diagnostics.map(d => d.code), ['dynamic-requirer', 'dynamic-require']);
 });
+
+test('self-referencing class tables survive branch, loop and expression merges', () => {
+	const source = [
+		'local Class = {}',
+		'Class.__index = Class',
+		'if flag then local ignored = true end',
+		'while flag do local ignored = true end',
+		'local selected = Class or Class',
+		'require("@Systems/TestSystem/Server/Main")',
+	].join('\n');
+	assert.deepEqual(check(source).diagnostics.map(d => d.code), ['cross-boundary']);
+});
+
+test('mutually recursive tables survive control-flow merges', () => {
+	const source = 'local A = {}\nlocal B = {}\nA.other = B\nB.other = A\nif flag then local ignored = true end\nwhile flag do local ignored = true end\nrequire("@Systems/TestSystem/Server/Main")';
+	assert.deepEqual(check(source).diagnostics.map(d => d.code), ['cross-boundary']);
+});
+
+test('cyclic table alternatives retain distinct import bindings', () => {
+	const source = prefix + [
+		'local Class = {}',
+		'Class.__index = Class',
+		'Class.import = factory(script)',
+		'local r = Class.import',
+		'if flag then Class.import = require; r = Class.import end',
+		'r("@Systems/TestSystem/Server/Main")',
+	].join('\n');
+	const result = check(source);
+	assert.ok(result.diagnostics.some(d => d.code === 'cross-boundary'));
+	assert.ok(result.dependencies.some(d => d.custom && d.target?.includes('/Server/')));
+	assert.ok(result.dependencies.some(d => !d.custom && d.target?.includes('/Server/')));
+});
