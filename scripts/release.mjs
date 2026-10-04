@@ -10,7 +10,7 @@ function fail(message) { console.error(message); process.exit(1); }
 function run(command, args, options = {}) {
 	console.log(`> ${command} ${args.join(' ')}`);
 	if (dryRun && options.mutates) { return ''; }
-	const result = spawnSync(command, args, { encoding: 'utf8', shell: process.platform === 'win32', stdio: options.capture ? ['inherit', 'pipe', 'inherit'] : 'inherit' });
+	const result = spawnSync(command, args, { encoding: 'utf8', shell: process.platform === 'win32' && (command === 'npm' || command === 'npx'), stdio: options.capture ? ['inherit', 'pipe', 'inherit'] : 'inherit' });
 	if (result.status !== 0) { fail(`Failed: ${command} ${args.join(' ')}`); }
 	return result.stdout?.trim() ?? '';
 }
@@ -52,6 +52,6 @@ run('git', ['add', 'package.json', 'package-lock.json'], { mutates: true });
 run('git', ['commit', '-m', `release: ${target === 'cli' ? 'CLI' : 'extension'} ${next}`, '-m', 'Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>'], { mutates: true });
 run('git', ['tag', tag], { mutates: true });
 run('git', ['push', 'origin', branch, tag], { mutates: true });
-console.log(target === 'cli'
+console.log(dryRun ? '\nDry run complete; nothing was changed.' : target === 'cli'
 	? `\nPushed ${tag}. The Release Capataz CLI workflow will build and publish the binaries: gh run watch`
 	: `\nPublished extension ${next} and pushed ${tag}.`);
