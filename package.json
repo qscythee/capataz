@@ -2,7 +2,7 @@
   "name": "capataz",
   "displayName": "Capataz",
   "description": "Feature-based Systems management for Rojo projects. Opt-in by adding a capataz.config.json at the workspace root.",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "publisher": "qscythee",
   "license": "MIT",
   "author": "qscythee",
@@ -14,14 +14,6 @@
     "url": "https://github.com/qscythee/capataz/issues"
   },
   "homepage": "https://github.com/qscythee/capataz#readme",
-  "keywords": [
-    "roblox",
-    "luau",
-    "rojo",
-    "rokit",
-    "systems",
-    "lint"
-  ],
   "engines": {
     "node": ">=22.18.0",
     "vscode": "^1.138.0"
