@@ -100,6 +100,7 @@
     "test:unit": "node scripts/test-unit.mjs",
     "release:cli": "node scripts/release.mjs cli",
     "release:ext": "node scripts/release.mjs ext",
+    "release:all": "node scripts/release.mjs all",
     "package:cli": "npm run build:cli && node scripts/package-cli.mjs",
     "watch": "npm-run-all -p watch:*",
     "watch:esbuild": "node esbuild.js --watch",
