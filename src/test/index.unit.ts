@@ -61,7 +61,9 @@ test('system routes are case-insensitive and support built-in services and custo
 	assert.equal(node('ReplicatedFirst', 'Systems', 'TestSystem', 'ReplicatedFirst').$path, 'src/Systems/TestSystem/ReplicatedFirst');
 	assert.equal(node('ReplicatedFirst', 'Systems', 'TestSystem', 'Bootstrap').$path, 'src/Systems/TestSystem/Bootstrap');
 	await generate(project, config);
-	assert.match(await project.read('src/Core/Shared/CustomRequirer/SystemRoutes.luau'), /\["bootstrap"\] = \{ Service = "ReplicatedFirst", Name = "Bootstrap" \}/);
+	const generatedRoutes = await project.read('src/Core/Shared/CustomRequirer/SystemRoutes.luau');
+	assert.match(generatedRoutes, /\["server"\] = \{ Service = "ServerScriptService", Name = "Server" \}/);
+	assert.match(generatedRoutes, /\["bootstrap"\] = \{ Service = "ReplicatedFirst", Name = "Bootstrap" \}/);
 	assert.ok(!(await projectIssues(project, config)).some(issue => issue.includes('SystemRoutes.luau')));
 	const result = await checkProject(project, config);
 	assert.deepEqual(result.diagnostics, []);

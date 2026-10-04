@@ -42,7 +42,11 @@ function CustomRequirer.new(config: Config)
       ancestorByLower[string.lower(name)] = inst
    end
 
-   local serviceRouteByLower: { [string]: ServiceRoute } = {}
+   local serviceRouteByLower: { [string]: ServiceRoute } = {
+      client = { Service = "ReplicatedStorage", Name = "Client" },
+      server = { Service = "ServerScriptService", Name = "Server" },
+      shared = { Service = "ReplicatedStorage", Name = "Shared" },
+   }
    for name, route in ServiceRoutes do
       serviceRouteByLower[string.lower(name)] = route
    end
