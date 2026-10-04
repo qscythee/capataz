@@ -2,7 +2,7 @@ import { CapatazConfig, CapatazTreeNode, CONFIG_FILE_NAME } from '../config';
 import { ProjectFs } from './fs';
 import { configFileText, generate, readConfig } from './project';
 
-const directories = ['src/Core/First', 'src/Core/Client', 'src/Core/Shared', 'src/Core/Server', 'src/Assets', 'src/Systems'];
+const directories = ['src/Core/First', 'src/Core/Client', 'src/Core/Shared', 'src/Core/Server', 'src/Systems'];
 const parts = ['Client', 'Server', 'Shared'];
 const examples = ['GreetingSystem', 'CounterSystem'];
 export const starterConfig: CapatazConfig = {
@@ -10,7 +10,7 @@ export const starterConfig: CapatazConfig = {
 	tree: {
 		$className: 'DataModel',
 		ReplicatedFirst: { $className: 'ReplicatedFirst', Core: { $className: 'Folder', First: { $path: 'src/Core/First' } } },
-		ReplicatedStorage: { $className: 'ReplicatedStorage', Core: { $className: 'Folder', Client: { $path: 'src/Core/Client' }, Shared: { $path: 'src/Core/Shared' } }, Assets: { $path: 'src/Assets' }, Import: { $path: 'src/Import.luau' } },
+		ReplicatedStorage: { $className: 'ReplicatedStorage', Core: { $className: 'Folder', Client: { $path: 'src/Core/Client' }, Shared: { $path: 'src/Core/Shared' } }, Import: { $path: 'src/Import.luau' } },
 		ServerScriptService: { $className: 'ServerScriptService', Core: { $className: 'Folder', Server: { $path: 'src/Core/Server' } } },
 	},
 };
