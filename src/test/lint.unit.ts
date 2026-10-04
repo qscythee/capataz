@@ -37,6 +37,27 @@ test('Instance requires, native aliases and missing targets are checked', () => 
 	assert.equal(check('require("@Systems/TestSystem/Server/Main")').diagnostics[0]?.code, 'cross-boundary');
 	assert.equal(check('require("@Systems/TestSystem/Shared/Missing")').diagnostics[0]?.code, 'unresolved-require');
 });
+test('require diagnostics span the complete call and string-call syntax is analyzed', () => {
+	const call = 'require("@Systems/TestSystem/Server/Main")';
+	const callDiagnostic = check(call).diagnostics[0]!;
+	assert.equal(callDiagnostic.code, 'cross-boundary');
+	assert.equal(callDiagnostic.column, 1);
+	assert.equal(callDiagnostic.endLine, 1);
+	assert.equal(callDiagnostic.endColumn, call.length + 1);
+	assert.equal(callDiagnostic.length, call.length);
+
+	const sugar = 'require "@Systems/TestSystem/Server/Main"';
+	const sugarDiagnostic = check(sugar).diagnostics[0]!;
+	assert.equal(sugarDiagnostic.code, 'cross-boundary');
+	assert.equal(sugarDiagnostic.endColumn, sugar.length + 1);
+
+	const multiline = 'require(\n\tgetPath()\n)';
+	const multilineDiagnostic = check(multiline).diagnostics[0]!;
+	assert.equal(multilineDiagnostic.code, 'dynamic-require');
+	assert.equal(multilineDiagnostic.line, 1);
+	assert.equal(multilineDiagnostic.endLine, 3);
+	assert.equal(multilineDiagnostic.endColumn, 2);
+});
 test('custom new with literal Ancestors is detected without relying on variable names', () => {
 	const source = 'local C = require(game:GetService("ReplicatedStorage").Core.Shared.CustomRequirer)\nlocal maker = C.new({ Ancestors = { Systems = game:GetService("ServerScriptService").Systems } })\nlocal r = maker(script)\nr("@Systems/TestSystem/Server/Main")';
 	assert.equal(check(source).diagnostics[0]?.code, 'cross-boundary');
@@ -58,6 +79,17 @@ test('do scopes preserve outer assignments and loops retain possibly unsafe bind
 test('warning suppression requires a reason and never suppresses boundary errors', () => {
 	assert.equal(check('-- capataz-ignore dynamic-require: computed runtime target\nrequire(getTarget())').diagnostics.length, 0);
 	assert.equal(check('-- capataz-ignore cross-boundary: invalid exception\nrequire("@Systems/TestSystem/Server/Main")').diagnostics[0]?.code, 'cross-boundary');
+});
+test('Capataz line directives suppress their matching rule on the comment and following line', () => {
+	const result = check('require(getTarget()) -- Capataz(dynamic-require) dynamic by design\nrequire(getTarget())\nrequire(getTarget())');
+	assert.deepEqual(result.diagnostics.map(d => d.line), [3]);
+	assert.equal(check('-- Capataz(dynamic-requirer) different rule\nrequire(getTarget())').diagnostics[0]?.code, 'dynamic-require');
+	assert.equal(check('local text = "-- Capataz(dynamic-require) not a comment"\nrequire(getTarget())').diagnostics[0]?.code, 'dynamic-require');
+});
+test('config can turn off dynamic-require warnings without disabling other warning categories', () => {
+	const source = 'local C = require(game:GetService("ReplicatedStorage").Core.Shared.CustomRequirer)\nlocal r = C.new({Ancestors = {}, RootResolver = function() return game:GetService("ServerScriptService"), 0 end})(script)\nr("@any/Module")\nrequire(getTarget())';
+	const disabledIndex = { ...index, config: { ...index.config, lint: { rules: { 'dynamic-require': 'off' as const } } } };
+	assert.deepEqual(analyzeSource(source, disabledIndex, modules[2]).diagnostics.map(d => d.code), ['dynamic-requirer']);
 });
 test('table member assignment tracks custom imports; generic function parameters shadow builtins', () => {
 	const source = prefix + 'local helpers = {}\nhelpers.import = factory(script)\nhelpers["import"]("@Systems/TestSystem/Server/Main")\nlocal function identity<T>(require: T) require("ignored") end';

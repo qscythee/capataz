@@ -39,6 +39,6 @@ export async function runNewSystem(outputChannel: vscode.OutputChannel): Promise
 	}
 
 	await newSystem(editorFs(gate.root), gate.config, name);
-	outputChannel.appendLine('Wrote default.project.json');
+	outputChannel.appendLine('Wrote default.project.json and system routes');
 	vscode.window.showInformationMessage(`Capataz: created System '${name}'.`);
 }

@@ -7,37 +7,48 @@ import { isSea } from 'node:sea';
 import { CONFIG_FILE_NAME, defaultSystemsDir } from './config';
 import { nodeFs, walk } from './core/fs';
 import { initialize } from './core/init';
-import { buildProject, generate, newSystem, projectIssues, projectText, readConfig, systemName } from './core/project';
+import { buildProject, generate, newSystem, projectIssues, projectText, readConfig, resolveSystemRoute, systemName } from './core/project';
 import { previewFs } from './core/preview';
 import { checkProject, CheckResult } from './lint/check';
 import { embeddedTemplates } from './templates';
 import { normalize } from './lint/index';
 
+const commands: [string, string][] = [
+	['init', 'Initialize or adopt a project, preserving authored files'],
+	['system new <name>', 'Create Client/Server/Shared directories and regenerate'],
+	['system remove <name>', 'Remove a system after confirmation and regenerate'],
+	['system list', 'List systems and their available runtime parts'],
+	['project generate', 'Generate the Rojo project and runtime route table'],
+	['project check', 'Validate config/mounts and generated project freshness'],
+	['check', 'Check imports and Client/Server/Shared boundaries'],
+	['explain <file>', 'Show reachable imports and dependency paths to problems'],
+	['graph', 'Export dependencies as JSON or Graphviz DOT'],
+	['doctor', 'Check project health and availability of external tools'],
+	['dev', 'Watch project structure; run Rojo serve and sourcemap watch'],
+];
+const options: [string, string][] = [
+	['--root <directory>', 'Project root (default: current directory)'],
+	['--format <text|json|dot>', 'Output format (dot only for graph; graph defaults to json)'],
+	['--dry-run', 'Preview init/new/remove/generate without writing files'],
+	['--yes', 'Confirm system removal for automation'],
+	['--strict', 'Fail check/doctor/explain on all warnings too'],
+	['--port <number>', 'Rojo serve port (dev)'],
+	['--help, -h', 'Show command help'],
+	['--version, -v', 'Show Capataz version'],
+];
+function helpRows(rows: [string, string][]): string {
+	const width = Math.max(...rows.map(([label]) => label.length)) + 2;
+	return rows.map(([label, description]) => `  ${label.padEnd(width)}${description}`).join('\n');
+}
+
 const HELP = `Capataz — feature-owned Roblox systems and runtime-boundary checks
 
 Usage: capataz <command> [options]
 
-  init                         Initialize or adopt a project, preserving authored files
-  system new <name>            Create Client/Server/Shared directories and regenerate
-  system remove <name>         Remove a system after confirmation and regenerate
-  system list                 List systems and their available runtime parts
-  project generate            Generate default.project.json from config and systems
-  project check               Validate config/mounts and check generated project freshness
-  check                       Check imports and Client/Server/Shared boundaries
-  explain <file>              Show reachable imports and dependency paths to problems
-  graph                       Export dependencies as JSON or Graphviz DOT
-  doctor                      Check project health and availability of external tools
-  dev                         Watch project structure; run Rojo serve and sourcemap watch
+${helpRows(commands)}
 
 Options:
-  --root <directory>          Project root (default: current directory)
-  --format <text|json|dot>     Output format (dot only for graph; graph defaults to json)
-  --dry-run                   Preview init/new/remove/generate without writing files
-  --yes                       Confirm system removal for automation
-  --strict                    Fail check/doctor/explain on all warnings too
-  --port <number>             Rojo serve port (dev)
-  --help, -h                  Show command help
-  --version, -v               Show Capataz version
+${helpRows(options)}
 
 Exit codes: 0 success, 1 check failures, 2 usage/config/tool failures.
 `;
@@ -83,8 +94,7 @@ async function dev(root: string, port?: string): Promise<number> {
 			try {
 				do {
 					pending = false;
-					const project = projectText(await buildProject(fs, await readConfig(fs)));
-					if (project !== await fs.read('default.project.json')) { await fs.write('default.project.json', project); console.log('Regenerated default.project.json'); }
+					if (await generate(fs, await readConfig(fs))) { console.log('Regenerated project and system routes'); }
 				} while (pending && !stopped);
 			} catch (error) { console.error(`Capataz: ${(error as Error).message}`); }
 			finally { running = false; }
@@ -131,7 +141,14 @@ export async function main(args: string[]): Promise<number> {
 	if (signature === 'system list') {
 		const systems = [];
 		for (const [system, directory] of await fs.entries(defaultSystemsDir(config))) {
-			if (directory) { const parts = []; for (const part of ['Client', 'Server', 'Shared']) { if (await fs.exists(`${defaultSystemsDir(config)}/${system}/${part}`)) { parts.push(part); } } systems.push({ name: system, parts }); }
+			if (directory) {
+				const parts = [];
+				for (const [part, isDirectory] of await fs.entries(`${defaultSystemsDir(config)}/${system}`)) {
+					const route = isDirectory ? resolveSystemRoute(config, part) : undefined;
+					if (route) { parts.push(route.name); }
+				}
+				systems.push({ name: system, parts });
+			}
 		}
 		systems.sort((a, b) => a.name.localeCompare(b.name)); emit(systems, format, systems.map(s => `${s.name}: ${s.parts.join(', ')}`).join('\n') || 'No systems.'); return 0;
 	}
@@ -146,7 +163,7 @@ export async function main(args: string[]): Promise<number> {
 		const files = await walk(fs, directory); await fs.remove(directory); await generate(fs, config);
 		outputMutation({ system, files }, `Removed ${system} (${files.length} files).`); return 0;
 	}
-	if (signature === 'project generate') { await generate(fs, config); outputMutation({ file: 'default.project.json' }, 'Wrote default.project.json'); return 0; }
+	if (signature === 'project generate') { await generate(fs, config); outputMutation({ file: 'default.project.json', routeFile: 'src/Core/Shared/CustomRequirer/SystemRoutes.luau' }, 'Wrote project and system routes'); return 0; }
 	if (command === 'dev') { return dev(root, values.port); }
 	if (signature === 'project check') {
 		const issues = await projectIssues(fs, config);

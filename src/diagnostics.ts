@@ -17,7 +17,7 @@ export function registerDiagnostics(context: vscode.ExtensionContext, output: vs
 	let running: Promise<void> | undefined;
 	let disposed = false;
 	const diagnostic = (issue: Diagnostic, root: vscode.Uri): vscode.Diagnostic => {
-		const range = new vscode.Range(issue.line - 1, issue.column - 1, issue.line - 1, issue.column - 1 + issue.length);
+		const range = new vscode.Range(issue.line - 1, issue.column - 1, issue.endLine - 1, issue.endColumn - 1);
 		const value = new vscode.Diagnostic(range, issue.message, issue.severity === 'error' ? vscode.DiagnosticSeverity.Error : vscode.DiagnosticSeverity.Warning);
 		value.source = 'Capataz'; value.code = issue.code;
 		if (issue.target) { value.relatedInformation = [new vscode.DiagnosticRelatedInformation(new vscode.Location(vscode.Uri.joinPath(root, issue.target), new vscode.Position(0, 0)), 'Required module')]; }

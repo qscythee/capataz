@@ -2,7 +2,7 @@ import * as path from 'node:path';
 import { ModuleInfo, ProjectIndex, normalize, resolveCustom, resolveNative } from './index';
 import { Token, tokenize } from './tokens';
 
-export interface Diagnostic { file: string; line: number; column: number; length: number; code: string; severity: 'error' | 'warning'; message: string; target?: string }
+export interface Diagnostic { file: string; line: number; column: number; length: number; endLine: number; endColumn: number; code: string; severity: 'error' | 'warning'; message: string; target?: string }
 export interface Dependency { file: string; target?: string; specifier: string; line: number; column: number; custom: boolean }
 export interface Analysis { diagnostics: Diagnostic[]; dependencies: Dependency[] }
 
@@ -28,14 +28,14 @@ class Reader {
 		if (!local) { for (let i = this.scopes.length - 1; i >= 0; i--) { if (this.scopes[i].has(name)) { this.scopes[i].set(name, value); return; } } }
 		this.scopes[this.scopes.length - 1].set(name, value);
 	}
-	report(token: Token, code: string, message: string, severity: Diagnostic['severity'] = 'error', target?: string): void {
-		this.result.diagnostics.push({ file: this.caller.file, line: token.line, column: token.column, length: token.end - token.start, code, severity, message, target });
+	report(token: Token, code: string, message: string, severity: Diagnostic['severity'] = 'error', target?: string, endToken = token): void {
+		this.result.diagnostics.push({ file: this.caller.file, line: token.line, column: token.column, length: endToken.end - token.start, endLine: endToken.endLine, endColumn: endToken.endColumn, code, severity, message, target });
 	}
-	invoke(value: Value, args: Value[], token: Token): Value {
-		if (args[0]?.kind === 'union') { return merge(args[0].alternatives!.map(argument => this.invoke(value, [argument, ...args.slice(1)], token))); }
+	invoke(value: Value, args: Value[], token: Token, endToken = token): Value {
+		if (args[0]?.kind === 'union') { return merge(args[0].alternatives!.map(argument => this.invoke(value, [argument, ...args.slice(1)], token, endToken))); }
 		if (value.kind === 'union') {
-			if (value.alternatives!.some(v => v.kind === 'unknown')) { this.report(token, 'dynamic-require', 'Callable binding differs between control-flow paths; not every import could be verified.', 'warning'); }
-			return merge(value.alternatives!.map(v => this.invoke(v, args, token)));
+			if (value.alternatives!.some(v => v.kind === 'unknown')) { this.report(token, 'dynamic-require', 'Callable binding differs between control-flow paths; not every import could be verified.', 'warning', undefined, endToken); }
+			return merge(value.alternatives!.map(v => this.invoke(v, args, token, endToken)));
 		}
 		if (value.kind === 'factory') { return { kind: 'custom', text: args[0]?.kind === 'instance' ? args[0].text : '', roots: value.roots, caseSensitive: value.caseSensitive, unverified: value.unverified }; }
 		if (value.kind === 'method') {
@@ -48,14 +48,14 @@ class Reader {
 				for (const [alias, root] of Object.entries(ancestors ?? {})) { if (root.kind === 'instance' && root.text) { roots[alias] = root.text; } }
 				const caseOption = args[0]?.fields?.CaseSensitive;
 				const unverified = !ancestors || !!args[0]?.fields?.RootResolver || !!caseOption && caseOption.kind !== 'boolean';
-				if (unverified) { this.report(token, 'dynamic-requirer', 'CustomRequirer configuration cannot be fully resolved statically; use the project Import factory or literal Ancestors without RootResolver.', 'warning'); }
+				if (unverified) { this.report(token, 'dynamic-requirer', 'CustomRequirer configuration cannot be fully resolved statically; use the project Import factory or literal Ancestors without RootResolver.', 'warning', undefined, endToken); }
 				return { kind: 'factory', roots, caseSensitive: caseOption?.text === 'true', unverified };
 			}
 			return unknown;
 		}
 		if (value.kind !== 'native' && value.kind !== 'custom') { return unknown; }
 		if (value.unverified) {
-			this.report(token, 'dynamic-require', 'Custom resolver behavior is dynamic; this import could not be verified.', 'warning');
+			this.report(token, 'dynamic-require', 'Custom resolver behavior is dynamic; this import could not be verified.', 'warning', undefined, endToken);
 			this.result.dependencies.push({ file: this.caller.file, specifier: args[0]?.kind === 'string' ? args[0].text! : '<dynamic>', line: token.line, column: token.column, custom: true });
 			return unknown;
 		}
@@ -67,20 +67,20 @@ class Reader {
 			specifier = argument.text!;
 			target = value.kind === 'custom' ? resolveCustom(this.index, this.caller, specifier, value.text ?? '', value.roots, value.caseSensitive ?? true) : resolveNative(this.index, this.caller, specifier);
 		} else {
-			this.report(token, 'dynamic-require', 'Require target is dynamic; its runtime boundary could not be verified.', 'warning');
+			this.report(token, 'dynamic-require', 'Require target is dynamic; its runtime boundary could not be verified.', 'warning', undefined, endToken);
 			this.result.dependencies.push({ file: this.caller.file, specifier, line: token.line, column: token.column, custom: value.kind === 'custom' });
 			return unknown;
 		}
 		this.result.dependencies.push({ file: this.caller.file, target: target?.file, specifier, line: token.line, column: token.column, custom: value.kind === 'custom' });
-		if (!target) { this.report(token, 'unresolved-require', `Cannot resolve ${value.kind === 'custom' ? 'custom import' : 'require'} '${specifier}' in the generated Rojo tree.`); return unknown; }
-		if (!target.module) { this.report(token, 'not-module', `'${specifier}' resolves to a Script/LocalScript, not a ModuleScript.`, 'error', target.file); }
+		if (!target) { this.report(token, 'unresolved-require', `Cannot resolve ${value.kind === 'custom' ? 'custom import' : 'require'} '${specifier}' in the generated Rojo tree.`, 'error', undefined, endToken); return unknown; }
+		if (!target.module) { this.report(token, 'not-module', `'${specifier}' resolves to a Script/LocalScript, not a ModuleScript.`, 'error', target.file, endToken); }
 		const from = this.caller.side, to = target.side;
 		if (from === 'Client' && /^(ServerScriptService|ServerStorage)\//.test(target.instance) && to !== 'Server') {
-			this.report(token, 'cross-boundary', `Client code cannot access server-only mount '${target.instance}'. This WILL error at runtime.`, 'error', target.file);
+			this.report(token, 'cross-boundary', `Client code cannot access server-only mount '${target.instance}'. This WILL error at runtime.`, 'error', target.file, endToken);
 		} else if (from === 'Server' && to === 'Client') {
-			this.report(token, 'cross-boundary', `Requiring Client code from Server code is discouraged: '${specifier}'. It may succeed at runtime, but server code should avoid depending on client modules.`, 'warning', target.file);
+			this.report(token, 'cross-boundary', `Requiring Client code from Server code is discouraged: '${specifier}'. It may succeed at runtime, but server code should avoid depending on client modules.`, 'warning', target.file, endToken);
 		} else if (from && to && (from === 'Shared' ? to !== 'Shared' : to !== from && to !== 'Shared')) {
-			this.report(token, 'cross-boundary', `${from} code cannot require ${to} code: '${specifier}'.${from === 'Client' && to === 'Server' ? ' This WILL error at runtime.' : ''}`, 'error', target.file);
+			this.report(token, 'cross-boundary', `${from} code cannot require ${to} code: '${specifier}'.${from === 'Client' && to === 'Server' ? ' This WILL error at runtime.' : ''}`, 'error', target.file, endToken);
 		}
 		if (target.file === 'src/Import.luau') { return { kind: 'factory' }; }
 		if (target.file === 'src/Core/Shared/CustomRequirer/init.luau') { return { kind: 'requirer' }; }
@@ -134,7 +134,7 @@ class Reader {
 					while (this.peek() && this.peek() !== ')') { const before = this.i; args.push(this.expression()); if (this.peek() !== ',') { break; } this.i++; if (this.i === before) { break; } }
 					if (this.peek() === ')') { this.i++; }
 				} else { args.push(this.expression(9)); }
-				value = this.invoke(value, args, callToken);
+				value = this.invoke(value, args, callToken, this.tokens[this.i - 1] ?? callToken);
 			} else if (this.peek() === '::') {
 				this.i++; this.skipType();
 			} else {
@@ -261,11 +261,25 @@ class Reader {
 }
 
 export function analyzeSource(source: string, index: ProjectIndex, caller: ModuleInfo): Analysis {
-	const reader = new Reader(tokenize(source), index, caller);
+	const comments: Token[] = [];
+	const reader = new Reader(tokenize(source, comments), index, caller);
 	reader.block();
+	const disabledLines = new Map<number, Set<string>>();
+	for (const comment of comments) {
+		const directive = /^--\s*Capataz\(([a-z-]+)\)(?:\s+.*)?$/i.exec(comment.text);
+		if (directive) {
+			for (const line of [comment.line, comment.line + 1]) {
+				const rules = disabledLines.get(line) ?? new Set<string>();
+				rules.add(directive[1].toLowerCase());
+				disabledLines.set(line, rules);
+			}
+		}
+	}
 	const lines = source.split(/\r?\n/);
 	reader.result.diagnostics = reader.result.diagnostics.filter(d => {
 		if (d.severity === 'error' || !['dynamic-require', 'dynamic-requirer'].includes(d.code)) { return true; }
+		if (d.code === 'dynamic-require' && index.config.lint?.rules?.['dynamic-require'] === 'off') { return false; }
+		if (disabledLines.get(d.line)?.has(d.code)) { return false; }
 		const directive = /--\s*capataz-ignore\s+([a-z-]+)\s*:/.exec(lines[d.line - 2] ?? '');
 		return directive?.[1] !== d.code;
 	});

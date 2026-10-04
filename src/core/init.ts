@@ -1,8 +1,8 @@
 import { CapatazConfig, CapatazTreeNode, CONFIG_FILE_NAME } from '../config';
 import { ProjectFs } from './fs';
-import { generate, readConfig } from './project';
+import { configFileText, generate, readConfig } from './project';
 
-const directories = ['src/Core/First', 'src/Core/Client', 'src/Core/Shared', 'src/Core/Server', 'src/Assets', 'src/Client', 'src/Systems'];
+const directories = ['src/Core/First', 'src/Core/Client', 'src/Core/Shared', 'src/Core/Server', 'src/Assets', 'src/Systems'];
 const parts = ['Client', 'Server', 'Shared'];
 const examples = ['GreetingSystem', 'CounterSystem'];
 export const starterConfig: CapatazConfig = {
@@ -12,7 +12,6 @@ export const starterConfig: CapatazConfig = {
 		ReplicatedFirst: { $className: 'ReplicatedFirst', Core: { $className: 'Folder', First: { $path: 'src/Core/First' } } },
 		ReplicatedStorage: { $className: 'ReplicatedStorage', Core: { $className: 'Folder', Client: { $path: 'src/Core/Client' }, Shared: { $path: 'src/Core/Shared' } }, Assets: { $path: 'src/Assets' }, Import: { $path: 'src/Import.luau' } },
 		ServerScriptService: { $className: 'ServerScriptService', Core: { $className: 'Folder', Server: { $path: 'src/Core/Server' } } },
-		StarterPlayer: { $className: 'StarterPlayer', StarterPlayerScripts: { $path: 'src/Client' } },
 	},
 };
 function addMissing(target: CapatazTreeNode, defaults: CapatazTreeNode): void {
@@ -22,27 +21,52 @@ function addMissing(target: CapatazTreeNode, defaults: CapatazTreeNode): void {
 	}
 }
 export interface Templates { read(relative: string): Promise<string>; entries(relative: string): Promise<[string, boolean][]> }
+
+async function migrateLegacyClientDirectory(fs: ProjectFs): Promise<void> {
+	const source = 'src/Client';
+	const target = 'src/Core/Client';
+	if (!(await fs.exists(source))) { return; }
+	const move = async (from: string, to: string): Promise<void> => {
+		for (const [name, isDirectory] of await fs.entries(from)) {
+			const sourcePath = `${from}/${name}`;
+			const targetPath = `${to}/${name}`;
+			if (isDirectory) {
+				await fs.mkdir(targetPath);
+				await move(sourcePath, targetPath);
+			} else {
+				if (await fs.exists(targetPath)) {
+					if (await fs.read(sourcePath) !== await fs.read(targetPath)) {
+						throw new Error(`Cannot migrate '${sourcePath}' to '${targetPath}': both files exist with different contents. Resolve the conflict and run capataz init again.`);
+					}
+				} else {
+					await fs.write(targetPath, await fs.read(sourcePath));
+				}
+				await fs.remove(sourcePath);
+			}
+		}
+	};
+	await fs.mkdir(target);
+	await move(source, target);
+	await fs.remove(source);
+}
+
 export async function initialize(fs: ProjectFs, templates: Templates): Promise<string[]> {
 	const hasConfig = await fs.exists(CONFIG_FILE_NAME);
 	let config: CapatazConfig;
-	if (hasConfig) { config = await readConfig(fs); }
+	if (hasConfig) { config = await readConfig(fs, true); }
 	else if (await fs.exists('default.project.json')) {
 		config = JSON.parse(await fs.read('default.project.json'));
 		if (!config.tree || typeof config.tree !== 'object') { throw new Error('Existing default.project.json needs a Rojo tree object.'); }
-		addMissing(config.tree, starterConfig.tree); config.systemsDir = 'src/Systems';
+		addMissing(config.tree, starterConfig.tree); config.systemsDir = 'src/Systems'; config.emitLegacyScripts = false;
 	} else { config = structuredClone(starterConfig); }
 	if ((config.systemsDir ?? 'src/Systems') !== 'src/Systems') { throw new Error('Init requires systemsDir to be src/Systems.'); }
-	const freshClient = !(await fs.exists('src/Client'));
-	const freshServer = !(await fs.exists('src/Core/Server'));
-	const created: string[] = [], missingExamples: string[] = [];
-	for (const system of examples) { if (!(await fs.exists(`src/Systems/${system}`))) { missingExamples.push(system); } }
+	await migrateLegacyClientDirectory(fs);
+	const created: string[] = [];
 	for (const relative of [...directories, ...examples.flatMap(system => parts.map(part => `src/Systems/${system}/${part}`))]) {
 		if (!(await fs.exists(relative))) { await fs.mkdir(relative); created.push(relative + '/'); }
 	}
-	const files = ['.luaurc', 'src/Import.luau', 'src/Core/Shared/CustomRequirer/init.luau'];
-	if (freshClient) { files.push('src/Client/Bootstrap.client.luau'); }
-	if (freshServer) { files.push('src/Core/Server/Bootstrap.server.luau'); }
-	for (const system of missingExamples) {
+	const files = ['.luaurc', 'src/Import.luau', 'src/Core/Shared/CustomRequirer/init.luau', 'src/Core/Client/Bootstrap.client.luau', 'src/Core/Server/Bootstrap.server.luau'];
+	for (const system of examples) {
 		for (const part of parts) {
 			const directory = `src/Systems/${system}/${part}`;
 			for (const [file, isDirectory] of await templates.entries(directory)) { if (!isDirectory) { files.push(`${directory}/${file}`); } }
@@ -50,7 +74,11 @@ export async function initialize(fs: ProjectFs, templates: Templates): Promise<s
 	}
 	for (const relative of files) { if (!(await fs.exists(relative))) { await fs.write(relative, await templates.read(relative)); created.push(relative); } }
 	for (const relative of directories) { if (!(await fs.entries(relative)).length) { await fs.write(relative + '/.gitkeep', ''); created.push(relative + '/.gitkeep'); } }
-	if (!hasConfig) { await fs.write(CONFIG_FILE_NAME, JSON.stringify(config, null, 2) + '\n'); created.push(CONFIG_FILE_NAME); }
+	const serializedConfig = configFileText(config);
+	if (!(await fs.exists(CONFIG_FILE_NAME)) || await fs.read(CONFIG_FILE_NAME) !== serializedConfig) {
+		await fs.write(CONFIG_FILE_NAME, serializedConfig);
+		if (!hasConfig) { created.push(CONFIG_FILE_NAME); }
+	}
 	await generate(fs, config);
 	return created;
 }

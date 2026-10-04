@@ -28,7 +28,16 @@ suite('Capataz init', () => {
 		const config = JSON.parse(await read(root, 'capataz.config.json'));
 		const project = JSON.parse(await read(root, 'default.project.json'));
 		const luaurc = JSON.parse(await read(root, '.luaurc'));
-		assert.strictEqual(config.systemsDir, 'src/Systems');
+		assert.strictEqual(config.project.systemsDir, 'src/Systems');
+		assert.strictEqual(config.project.emitLegacyScripts, false);
+		assert.strictEqual(config.project.tree.ReplicatedStorage.Core.Client.$path, 'src/Core/Client');
+		assert.strictEqual(config.project.tree.ReplicatedFirst.Core.First.$path, 'src/Core/First');
+		assert.strictEqual(project.emitLegacyScripts, false);
+		assert.strictEqual(project.tree.ReplicatedStorage.Client, undefined);
+		assert.strictEqual(project.tree.ReplicatedStorage.Core.Client.$path, 'src/Core/Client');
+		assert.strictEqual(project.tree.ReplicatedFirst.Core.First.$path, 'src/Core/First');
+		assert.strictEqual(project.tree.ReplicatedStorage.Core.First, undefined);
+		assert.strictEqual(project.tree.StarterPlayer, undefined);
 		assert.deepStrictEqual(luaurc.aliases, { Core: 'src/Core/', Systems: 'src/Systems/' });
 		assert.strictEqual(project.tree.ReplicatedStorage.Packages, undefined);
 		assert.strictEqual(project.tree.ServerStorage, undefined);
@@ -39,7 +48,7 @@ suite('Capataz init', () => {
 		assert.strictEqual(project.tree.ServerScriptService.Systems.CounterSystem.Server.$path, 'src/Systems/CounterSystem/Server');
 		assert.match(await read(root, 'src/Import.luau'), /RootResolver/);
 		assert.match(await read(root, 'src/Core/Shared/CustomRequirer/init.luau'), /CustomRequirer\.new/);
-		assert.match(await read(root, 'src/Client/Bootstrap.client.luau'), /Controller/);
+		assert.match(await read(root, 'src/Core/Client/Bootstrap.client.luau'), /Controller/);
 		assert.deepStrictEqual(await initializeProject(root, output, extensionUri), []);
 	});
 
@@ -62,24 +71,34 @@ suite('Capataz init', () => {
 		};
 		await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(root, 'default.project.json'), Buffer.from(JSON.stringify(originalProject)));
 		await initializeProject(root, output, extensionUri);
+		const capatazConfig = JSON.parse(await read(root, 'capataz.config.json'));
+		assert.strictEqual(capatazConfig.project.emitLegacyScripts, false);
+		assert.strictEqual(capatazConfig.project.systemsDir, 'src/Systems');
 		const project = JSON.parse(await read(root, 'default.project.json'));
 		assert.strictEqual(project.name, 'MyGame');
-		assert.strictEqual(project.emitLegacyScripts, true);
+		assert.strictEqual(project.emitLegacyScripts, false);
 		assert.deepStrictEqual(project.tree.Workspace, originalProject.tree.Workspace);
 		assert.deepStrictEqual(project.tree.ReplicatedStorage.Packages, originalProject.tree.ReplicatedStorage.Packages);
 		assert.deepStrictEqual(project.tree.ServerStorage, originalProject.tree.ServerStorage);
 		assert.strictEqual(project.tree.ReplicatedStorage.Core.$className, 'Folder');
+		assert.strictEqual(project.tree.ReplicatedStorage.Client, undefined);
+		assert.strictEqual(project.tree.ReplicatedStorage.Core.Client.$path, 'src/Core/Client');
+		assert.strictEqual(project.tree.StarterPlayer, undefined);
 		assert.strictEqual(await read(root, 'src/Systems/GreetingSystem/Client/OwnController.luau'), 'return {}\n');
 		assert.strictEqual(project.tree.ReplicatedStorage.Systems.GreetingSystem.Client.$path, 'src/Systems/GreetingSystem/Client');
 		assert.strictEqual(project.tree.ServerScriptService.Systems.CounterSystem.Server.$path, 'src/Systems/CounterSystem/Server');
-		assert.strictEqual(await read(root, 'src/Client/Bootstrap.client.luau'), '-- own client startup\n');
+		assert.strictEqual(await read(root, 'src/Core/Client/Bootstrap.client.luau'), '-- own client startup\n');
 		assert.strictEqual(await read(root, 'src/Core/Server/Bootstrap.server.luau'), '-- own server startup\n');
+		await assert.rejects(async () => vscode.workspace.fs.stat(vscode.Uri.joinPath(root, 'src/Client')));
 	});
 
 	test('adds bootstraps when an existing src has no Core or client folder', async () => {
 		await vscode.workspace.fs.createDirectory(vscode.Uri.joinPath(root, 'src'));
 		await initializeProject(root, output, extensionUri);
-		assert.match(await read(root, 'src/Client/Bootstrap.client.luau'), /Controller/);
-		assert.match(await read(root, 'src/Core/Server/Bootstrap.server.luau'), /Service/);
+		assert.match(await read(root, 'src/Core/Client/Bootstrap.client.luau'), /Controller/);
+		assert.strictEqual(
+			await read(root, 'src/Core/Server/Bootstrap.server.luau'),
+			await fs.readFile(path.join(extensionUri.fsPath, 'templates/src/Core/Server/Bootstrap.server.luau'), 'utf8'),
+		);
 	});
 });

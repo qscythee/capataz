@@ -1,10 +1,12 @@
 export type Require = typeof(require)
 export type ContextualImportGenerator = (Instance) -> Require
 export type RootResolver = (alias: string, pathSegments: { string }, context: Instance) -> (Instance?, number?)
+export type ServiceRoute = { Service: string, Name: string }
 
 export type Config = {
    Ancestors: { [string]: Instance },
    Aliases: { [string]: string }?,
+   ServiceRoutes: { [string]: ServiceRoute }?,
    RootResolver: RootResolver?,
    IgnorePredicate: ((Instance) -> boolean)?,
    Debug: boolean?,
@@ -20,6 +22,7 @@ local CustomRequirer = {}
 function CustomRequirer.new(config: Config)
    local Ancestors = config.Ancestors
    local Aliases = config.Aliases or {}
+   local ServiceRoutes = config.ServiceRoutes or {}
    local RootResolver = config.RootResolver
    local IgnorePredicate: (Instance) -> boolean = config.IgnorePredicate or function(_instance: Instance)
       return false
@@ -34,14 +37,19 @@ function CustomRequirer.new(config: Config)
    local _MicroprofilerEnabled = config.MicroprofilerEnabled or false
 
    -- Internal state for the requirer.
-   local _moduleCache: { [Instance]: any } = {}
-   local _performanceData: { [Instance]: number } = {}
-   local _circularDependencyStack: { [Instance]: boolean } = {}
-
    local ancestorByLower: { [string]: Instance } = {}
    for name, inst in Ancestors do
       ancestorByLower[string.lower(name)] = inst
    end
+
+   local serviceRouteByLower: { [string]: ServiceRoute } = {}
+   for name, route in ServiceRoutes do
+      serviceRouteByLower[string.lower(name)] = route
+   end
+
+   local lowerChildrenByParent: { [Instance]: { [string]: Instance } } =
+      setmetatable({}, { __mode = "k" })
+   local systemRootsByService: { [string]: Instance } = {}
 
    local function debugLog(...)
       if Debug then
@@ -68,12 +76,35 @@ function CustomRequirer.new(config: Config)
       end
 
       local lowered = string.lower(childName)
-      for _, child in parent:GetChildren() do
-         if string.lower(child.Name) == lowered then
-            return child
+      local children = lowerChildrenByParent[parent]
+      if not children then
+         local indexed: { [string]: Instance } = {}
+         lowerChildrenByParent[parent] = indexed
+         for _, child in parent:GetChildren() do
+            indexed[string.lower(child.Name)] = child
+         end
+         parent.ChildAdded:Connect(function(child)
+            indexed[string.lower(child.Name)] = child
+         end)
+         parent.ChildRemoved:Connect(function(child)
+            local key = string.lower(child.Name)
+            if indexed[key] == child then
+               indexed[key] = nil
+            end
+         end)
+         children = indexed
+      end
+      local child = children[lowered]
+      if child and child.Parent == parent and string.lower(child.Name) == lowered then
+         return child
+      end
+      children[lowered] = nil
+      for _, candidate in parent:GetChildren() do
+         if string.lower(candidate.Name) == lowered then
+            children[lowered] = candidate
+            return candidate
          end
       end
-
       return nil
    end
 
@@ -116,7 +147,20 @@ function CustomRequirer.new(config: Config)
 
       local current: Instance
       local firstSegment = 1
-      if RootResolver then
+      local route = if string.lower(alias) == "systems" then serviceRouteByLower[string.lower(segments[2] or "")] else nil
+      if route then
+         local systems = systemRootsByService[route.Service]
+         if not systems then
+            local service = game:GetService(route.Service)
+            systems = service:FindFirstChild("Systems")
+         end
+         if not systems then
+            error(("[CustomRequirer] Service '%s' has no Systems folder for route '%s'"):format(route.Service, segments[2]))
+         end
+         systemRootsByService[route.Service] = systems
+         segments[2] = route.Name
+         current = systems
+      elseif RootResolver then
          local redirectedRoot, consumedSegments = RootResolver(alias, segments, context)
          current = redirectedRoot or resolveAlias(alias)
          if redirectedRoot then

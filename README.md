@@ -1,6 +1,6 @@
 # Capataz
 
-Capataz manages feature-owned `Systems` through a CLI and a companion VS Code extension. Each system keeps its `Client`, `Server`, and `Shared` code together under `src/Systems/<Name>System/`. The generated `default.project.json` mounts client and shared modules in `ReplicatedStorage.Systems` and server modules in `ServerScriptService.Systems`. Both interfaces share project operations and import analysis.
+Capataz manages feature-owned `Systems` through a CLI and a companion VS Code extension. Each system keeps its `Client`, `Server`, and `Shared` code together under `src/Systems/<Name>System/`. The generated `default.project.json` mounts the client bootstrap, client and shared modules in `ReplicatedStorage`, and server modules in `ServerScriptService.Systems`. Route folder names are case-insensitive; service-named folders such as `ReplicatedFirst` can also be used, and custom folder-to-service mappings can be added in `capataz.config.json`. Both interfaces share project operations and import analysis.
 
 ## CLI
 
@@ -22,8 +22,8 @@ node dist/cli.cjs init --root /path/to/game
 | `capataz system remove Inventory --dry-run` | Preview removal and regeneration. |
 | `capataz system remove Inventory --yes` | Permanently remove the system. Without `--yes`, a terminal requires the full system name for confirmation. |
 | `capataz system list` | List systems and their runtime parts. |
-| `capataz project generate` | Regenerate `default.project.json`. |
-| `capataz project check` | Validate mounts and check generated-project freshness without rewriting it. |
+| `capataz project generate` | Regenerate `default.project.json` and the runtime route table. |
+| `capataz project check` | Validate mounts and generated-project and route-table freshness without rewriting them. |
 | `capataz check --strict` | Check imports and boundaries; fail on errors and all warnings. |
 | `capataz explain src/Systems/InventorySystem/Client/InventoryController.luau` | Show reachable imports and dependency chains to violations. |
 | `capataz graph --format dot` | Export Graphviz DOT; the default format is JSON. |
@@ -34,6 +34,49 @@ All commands accept `--root <directory>` and `--help`. Report commands support `
 
 Install and pin external tools in your project's `rokit.toml` as usual. Capataz does not install packages or replace Rojo, Luau LSP, Selene, or StyLua.
 
+In `capataz.config.json`, Rojo project settings are nested under `project`, so an existing Rojo project JSON can be copied into that object. Capataz settings such as `systemsDir`, `systemRoutes`, and `lint` are retained alongside the Rojo fields as shown:
+
+```json
+{
+  "project": {
+    "emitLegacyScripts": false,
+    "systemsDir": "src/Systems",
+    "syncbackRules": {
+      "ignoreTrees": ["ReplicatedStorage/Import"]
+    },
+    "tree": {
+      "$className": "DataModel",
+      "ReplicatedStorage": { "$className": "ReplicatedStorage" },
+      "ServerScriptService": { "$className": "ServerScriptService" }
+    }
+  },
+  "systemRoutes": {},
+  "lint": {}
+}
+```
+
+Flat configs from earlier Capataz versions remain readable; running `capataz init` migrates them to this nested format.
+
+### System routing
+
+The default route names are `Client` and `Shared` to `ReplicatedStorage`, and `Server` to `ServerScriptService`. Route folder names are matched without case sensitivity, so a `client` folder is mounted as `Client` in the generated instance tree; system names and module paths retain their normal case-sensitive matching. Recognized Roblox service names also work directly as route folders; for example, `ReplicatedFirst` maps to `ReplicatedFirst.Systems.<Name>System.ReplicatedFirst`. Map other services or custom folder names explicitly with `systemRoutes`:
+
+For a custom source folder name, add a `systemRoutes` mapping from that name to a Roblox service in `capataz.config.json`:
+
+```json
+{
+  "systemRoutes": {
+    "Bootstrap": "ReplicatedFirst"
+  }
+}
+```
+
+Then put the routed modules in `src/Systems/<Name>System/Bootstrap/`. Capataz mounts them at `ReplicatedFirst.Systems.<Name>System.Bootstrap`, routes `@Systems/<Name>System/Bootstrap/...` there at runtime, and includes the folder in CLI system listings and runtime-boundary analysis. `capataz project generate` regenerates both `default.project.json` and the generated route table at `src/Core/Shared/CustomRequirer/SystemRoutes.luau`; edit `systemRoutes` rather than that generated file.
+
+`CustomRequirer` resolves route aliases to cached service `Systems` roots. Its optional case-insensitive child lookup also indexes children per parent instead of scanning them on every miss; exact-case mode stays on Roblox's direct `FindFirstChild` path. Module execution caching remains Roblox's built-in `require` behavior.
+
+Capataz requires `emitLegacyScripts: false`. This lets Rojo use modern `Script` instances with suffix-derived `RunContext`; the `.client.luau` bootstrap under `src/Core/Client` is a client-context Script mounted at `ReplicatedStorage.Core.Client`. `src/Core/First` is mounted at `ReplicatedFirst.Core.First`. Init migrates old `src/Client` content into `src/Core/Client` without overwriting files; conflicting files are reported for manual resolution. Explicit system routes, such as a folder mapped to `ReplicatedFirst`, remain available.
+
 ## Runtime boundary linting
 
 | Requiring code | Allowed targets |
@@ -42,7 +85,7 @@ Install and pin external tools in your project's `rokit.toml` as usual. Capataz 
 | Server | Server, Shared; Client imports warn |
 | Shared | Shared |
 
-Server → Client is an enforced architecture rule even when Client modules are replicated. Client access to server-only mounts is also rejected. `src/Client`, `src/Core/Client`, and `src/Core/First` are client roots; `src/Core/Server` is a server root. System sides follow `systemsDir`. Script suffixes and server-only/StarterPlayer/StarterGui/StarterPack/ReplicatedFirst mounts also contribute to classification. Other ReplicatedStorage modules default to Shared. Unclassified modules still receive import-resolution checks.
+Server → Client is an enforced architecture rule even when Client modules are replicated. Client access to server-only mounts is also rejected. `src/Core/Client` and `src/Core/First` are client roots; `src/Core/Server` is a server root. System sides follow `systemsDir`. Script suffixes and server-only/StarterPlayer/StarterGui/StarterPack/ReplicatedFirst mounts also contribute to classification. Other ReplicatedStorage modules default to Shared. Unclassified modules still receive import-resolution checks.
 
 VS Code reports errors in the Problems panel and refreshes on unsaved edits, source changes, and config changes. **Capataz: Check Runtime Boundaries** refreshes manually. Each workspace folder opts in through `capataz.config.json`. CI uses the same checker through `capataz check`.
 
@@ -74,6 +117,20 @@ local controller = require(module)
 
 `dynamic-requirer` supports the same directive. Boundary diagnostics and resolution **errors cannot be suppressed**. Bundled factories and bootstraps annotate their intentional dynamic operations.
 
+To disable the dynamic-require warning category project-wide, set this in `capataz.config.json`:
+
+```json
+{
+  "lint": {
+    "rules": {
+      "dynamic-require": "off"
+    }
+  }
+}
+```
+
+`warn` or an omitted rule keeps the default warning behavior. A `-- Capataz(dynamic-require) reason` comment suppresses that rule on the comment's line and the immediately following line. This form also works for other suppressible warning rule codes such as `dynamic-requirer`; errors remain unsuppressed.
+
 ## Lint timing in VS Code
 
 Set **Capataz: Lint Run** in VS Code Settings to `onChange` (the default) or `onSave`. With `"capataz.lint.run": "onSave"`, diagnostics use saved contents and remain unchanged while you type. Saves and external disk changes update them; structural/configuration changes and manual checks still run using saved contents. The setting supports user, workspace, and workspace-folder configuration and takes effect without restarting the extension.
@@ -102,13 +159,13 @@ Package folders and aliases are left to the project's chosen package manager. In
 
 If `src` already exists, Init adds missing framework directories and examples without replacing source files. When `default.project.json` exists, its settings and other Rojo mounts are carried into `capataz.config.json`; Capataz adds the missing framework mounts and regenerates the project file. Existing bootstrap files are preserved. If the project already has its own startup flow, call your system controllers and services from that flow.
 
-Init can run again to fill missing framework files. It does not replace existing source or config files.
+Init can run again to fill missing framework files and missing files from the checked-in example system templates. It does not replace existing source or config files; restored example files are copied exactly from `templates/src/Systems`.
 
 Other commands:
 
 - **Capataz: New System** creates `Client`, `Server`, and `Shared` directories and regenerates the Rojo project.
 - **Capataz: Delete System** removes a selected system after confirmation and regenerates the Rojo project.
-- **Capataz: Regenerate Project** rebuilds `default.project.json` from the config and current `src/Systems` folders.
+- **Capataz: Regenerate Project** rebuilds `default.project.json` and the runtime route table from the config and current `src/Systems` folders.
 - **Capataz: Check Runtime Boundaries** refreshes import diagnostics.
 
 For a module to use the import aliases at runtime:
@@ -118,7 +175,7 @@ local requireFrom = require(game:GetService("ReplicatedStorage").Import)(script)
 local Counter = requireFrom("@Systems/CounterSystem/Shared/Counter")
 ```
 
-On the server, `@Systems/<Name>/Server/...` resolves to `ServerScriptService.Systems`. `@Core/Server/...` resolves to `ServerScriptService.Core.Server`.
+On the server, `@Systems/<Name>/Server/...` resolves to `ServerScriptService.Systems`. Other route segments use their configured service while retaining the route folder in the instance path. `@Core/Server/...` resolves to `ServerScriptService.Core.Server`.
 
 ## Debug the extension
 

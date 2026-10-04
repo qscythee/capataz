@@ -1,7 +1,7 @@
-export interface Token { text: string; kind: 'word' | 'string' | 'symbol'; start: number; end: number; line: number; column: number }
+export interface Token { text: string; kind: 'word' | 'string' | 'symbol' | 'comment'; start: number; end: number; line: number; column: number; endLine: number; endColumn: number }
 
 /** Luau lexer: comments and quoted/long strings never become executable tokens. */
-export function tokenize(source: string): Token[] {
+export function tokenize(source: string, comments?: Token[]): Token[] {
 	const tokens: Token[] = [];
 	let i = 0, line = 1, column = 1;
 	const advance = (end: number) => { while (i < end) { if (source[i++] === '\n') { line++; column = 1; } else { column++; } } };
@@ -11,7 +11,13 @@ export function tokenize(source: string): Token[] {
 		if (source.startsWith('--', i)) {
 			const match = long(i + 2);
 			if (match) { const close = `]${match[1]}]`; const end = source.indexOf(close, i + 2 + match[0].length); advance(end < 0 ? source.length : end + close.length); }
-			else { const end = source.indexOf('\n', i); advance(end < 0 ? source.length : end); }
+			else {
+				const start = i, tokenLine = line, tokenColumn = column;
+				const end = source.indexOf('\n', i);
+				const finish = end < 0 ? source.length : end;
+				comments?.push({ text: source.slice(start, finish), kind: 'comment', start, end: finish, line: tokenLine, column: tokenColumn, endLine: line, endColumn: column + finish - start });
+				advance(finish);
+			}
 			continue;
 		}
 		const start = i, tokenLine = line, tokenColumn = column;
@@ -42,7 +48,7 @@ export function tokenize(source: string): Token[] {
 			const symbol = /^(\.\.\.|\.\.|::|==|~=|<=|>=|\+=|-=|\*=|\/=|->|\/\/)/.exec(source.slice(i));
 			text = word?.[0] ?? symbol?.[0] ?? source[i]; end = i + text.length; kind = word ? 'word' : 'symbol';
 		}
-		advance(end); tokens.push({ text, kind, start, end, line: tokenLine, column: tokenColumn });
+		advance(end); tokens.push({ text, kind, start, end, line: tokenLine, column: tokenColumn, endLine: line, endColumn: column });
 	}
 	return tokens;
 }

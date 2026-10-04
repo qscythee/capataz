@@ -26,6 +26,8 @@ suite('Capataz editor boundary diagnostics', () => {
 			await replace(prefix + 'return r("@Systems/CounterSystem/Server/CounterService")');
 			await waitFor(() => vscode.languages.getDiagnostics(uri).some(d => d.source === 'Capataz' && d.code === 'cross-boundary' && d.severity === vscode.DiagnosticSeverity.Error));
 			assert.ok(document.isDirty, 'The checker must see unsaved changes');
+			const boundary = vscode.languages.getDiagnostics(uri).find(d => d.source === 'Capataz' && d.code === 'cross-boundary')!;
+			assert.equal(document.getText(boundary.range), 'r("@Systems/CounterSystem/Server/CounterService")');
 			const other = vscode.Uri.joinPath(root, 'src/Systems/CounterSystem/Client/OtherBoundaryTest.luau');
 			await vscode.workspace.fs.writeFile(other, Buffer.from(prefix + 'return r("@Systems/CounterSystem/Server/CounterService")'));
 			await waitFor(() => vscode.languages.getDiagnostics(other).some(d => d.source === 'Capataz' && d.code === 'cross-boundary'));

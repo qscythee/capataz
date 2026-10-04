@@ -1,7 +1,7 @@
 import * as path from 'node:path';
 import { CapatazConfig, CapatazTreeNode, defaultSystemsDir } from '../config';
 import { ProjectFs, walk } from '../core/fs';
-import { buildProject } from '../core/project';
+import { buildProject, resolveSystemRoute } from '../core/project';
 
 export type Side = 'Client' | 'Server' | 'Shared';
 export interface ModuleInfo { file: string; instance: string; side?: Side; module: boolean }
@@ -20,8 +20,19 @@ export function sourceSide(file: string, config: CapatazConfig, instance = ''): 
 	if (/\.server\.lua[u]?$/.test(file)) { return 'Server'; }
 	const systems = defaultSystemsDir(config).replace(/\/$/, '');
 	const relative = file.startsWith(systems + '/') ? file.slice(systems.length + 1).split('/')[1] : undefined;
-	if (relative === 'Client' || relative === 'Server' || relative === 'Shared') { return relative; }
-	if (/^src\/(Client|Core\/(Client|First))\//.test(file)) { return 'Client'; }
+	if (relative) {
+		const route = resolveSystemRoute(config, relative);
+		if (route) {
+			const name = route.name.toLowerCase();
+			if (name === 'client') { return 'Client'; }
+			if (name === 'server') { return 'Server'; }
+			if (name === 'shared') { return 'Shared'; }
+			if (/^(ServerScriptService|ServerStorage)$/i.test(route.service)) { return 'Server'; }
+			if (/^(StarterPlayer|StarterGui|StarterPack|ReplicatedFirst)$/i.test(route.service)) { return 'Client'; }
+			if (/^ReplicatedStorage$/i.test(route.service)) { return 'Shared'; }
+		}
+	}
+	if (/^src\/Core\/(Client|First)\//.test(file)) { return 'Client'; }
 	if (file.startsWith('src/Core/Server/')) { return 'Server'; }
 	if (file.startsWith('src/Core/Shared/')) { return 'Shared'; }
 	if (/^(ServerScriptService|ServerStorage)(\/|$)/.test(instance)) { return 'Server'; }
@@ -90,7 +101,11 @@ export function resolveCustom(index: ProjectIndex, caller: ModuleInfo, specifier
 		const [alias, ...parts] = specifier.slice(1).split('/');
 		let root = roots?.[alias] ?? Object.entries(roots ?? {}).find(([name]) => name.toLowerCase() === alias.toLowerCase())?.[1];
 		if (!roots) {
-			if (alias.toLowerCase() === 'systems') { root = parts[1]?.toLowerCase() === 'server' ? 'ServerScriptService/Systems' : 'ReplicatedStorage/Systems'; }
+			if (alias.toLowerCase() === 'systems') {
+				const route = resolveSystemRoute(index.config, parts[1] ?? '');
+				root = `${route?.service ?? 'ReplicatedStorage'}/Systems`;
+				if (route && parts.length > 1) { parts[1] = route.name; }
+			}
 			if (alias.toLowerCase() === 'core') {
 				root = parts[0]?.toLowerCase() === 'server' ? 'ServerScriptService/Core' : 'ReplicatedStorage/Core';
 				if (parts[0]?.toLowerCase() === 'server') { parts[0] = 'Server'; }
