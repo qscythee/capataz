@@ -18,6 +18,7 @@ table.sort(modules, function(a, b)
 end)
 
 for _, moduleScript in modules do
+	-- Capataz(dynamic-require) Services are discovered at runtime.
 	local service = require(moduleScript)
 	if type(service) == "table" and type(service.Start) == "function" then
 		table.insert(startables, service)

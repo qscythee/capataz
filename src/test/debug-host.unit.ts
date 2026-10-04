@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import * as fs from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { createServer } from 'node:net';
@@ -64,7 +65,7 @@ test('debug terminal resolves capataz to the current build, preserves cwd, and s
 		? spawnSync(process.env.ComSpec ?? 'cmd.exe', ['/d', '/s', '/c', 'capataz --root "path with spaces"'], { cwd: workspace, env, encoding: 'utf8', windowsHide: true, windowsVerbatimArguments: true })
 		: spawnSync('capataz', ['--root', 'path with spaces'], { cwd: workspace, env, encoding: 'utf8' });
 	const first = invoke(); assert.equal(first.status, 0, first.stderr);
-	assert.deepEqual(JSON.parse(first.stdout), { args: ['--root', 'path with spaces'], cwd: await fs.realpath(workspace), version: 1 });
+	assert.deepEqual(JSON.parse(first.stdout), { args: ['--root', 'path with spaces'], cwd: realpathSync.native(workspace), version: 1 });
 	await fs.writeFile(cli, 'console.log(JSON.stringify({version:2}));');
 	assert.equal(JSON.parse(invoke().stdout).version, 2);
 	const settings = JSON.parse(await fs.readFile(path.join(workspace, '.vscode', 'settings.json'), 'utf8'));

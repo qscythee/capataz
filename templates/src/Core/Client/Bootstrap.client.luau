@@ -18,6 +18,7 @@ table.sort(modules, function(a, b)
 end)
 
 for _, moduleScript in modules do
+	-- Capataz(dynamic-require) Controllers are discovered at runtime.
 	local controller = require(moduleScript)
 	if type(controller) == "table" and type(controller.Start) == "function" then
 		table.insert(startables, controller)
