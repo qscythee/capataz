@@ -2,7 +2,7 @@
   "name": "capataz",
   "displayName": "Capataz",
   "description": "Feature-based Systems management for Rojo projects. Opt-in by adding a capataz.config.json at the workspace root.",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "publisher": "qscythee",
   "license": "MIT",
   "author": "qscythee",
