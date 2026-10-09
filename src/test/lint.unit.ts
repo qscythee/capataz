@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { analyzeSource } from '../lint/analyze';
+import { analyzeSource, inferExport, EvaluationContext } from '../lint/analyze';
 import { ModuleInfo, ProjectIndex } from '../lint/index';
 
 const modules: ModuleInfo[] = [
@@ -9,7 +9,9 @@ const modules: ModuleInfo[] = [
 	...(['Client', 'Server', 'Shared'] as const).map(side => ({ file: `src/Systems/TestSystem/${side}/Main.luau`, instance: `${side === 'Server' ? 'ServerScriptService' : 'ReplicatedStorage'}/Systems/TestSystem/${side}/Main`, side, module: true })),
 ];
 const index: ProjectIndex = { modules: new Map(modules.map(m => [m.file, m])), instances: new Map(modules.map(m => [m.instance, m])), aliases: { Systems: 'src/Systems' }, config: { tree: {} } };
-const check = (source: string, side = 'Client') => analyzeSource(source, index, modules.find(m => m.side === side && m.file.includes('Systems'))!);
+const factorySource = 'local C = require(game:GetService("ReplicatedStorage").Core.Shared.CustomRequirer) return C.new({Ancestors = {Systems = game:GetService("ReplicatedStorage").Systems}, CaseSensitive = true, ServiceRoutes = {server = {Service = "ServerScriptService", Name = "Server"}, shared = {Service = "ReplicatedStorage", Name = "Shared"}, client = {Service = "ReplicatedStorage", Name = "Client"}}})';
+const context: EvaluationContext = { runtime: 'Client', exportOf: module => module.file === 'src/Import.luau' ? inferExport(factorySource, index, module, context) : { kind: 'unknown' } };
+const check = (source: string, side = 'Client') => analyzeSource(source, index, modules.find(m => m.side === side && m.file.includes('Systems'))!, { ...context, runtime: side === 'Server' ? 'Server' : 'Client' });
 const prefix = 'local factory = require(game:GetService("ReplicatedStorage"):WaitForChild("Import"))\n';
 
 test('tracks custom factory, reassigned require, copies, multiline and constant paths', () => {
@@ -90,7 +92,7 @@ test('Capataz line directives work with CRLF line endings', () => {
 	assert.equal(check('-- Capataz(dynamic-require) reason\r\nrequire(getTarget())\r\n').diagnostics.length, 0);
 });
 test('config can turn off dynamic-require warnings without disabling other warning categories', () => {
-	const source = 'local C = require(game:GetService("ReplicatedStorage").Core.Shared.CustomRequirer)\nlocal r = C.new({Ancestors = {}, RootResolver = function() return game:GetService("ServerScriptService"), 0 end})(script)\nr("@any/Module")\nrequire(getTarget())';
+	const source = 'local C = require(game:GetService("ReplicatedStorage").Core.Shared.CustomRequirer)\nlocal r = C.new({Ancestors = {}, RootResolver = getResolver()})(script)\nr("@any/Module")\nrequire(getTarget())';
 	const disabledIndex = { ...index, config: { ...index.config, lint: { rules: { 'dynamic-require': 'off' as const } } } };
 	assert.deepEqual(analyzeSource(source, disabledIndex, modules[2]).diagnostics.map(d => d.code), ['dynamic-requirer']);
 });
@@ -101,7 +103,7 @@ test('table member assignment tracks custom imports; generic function parameters
 test('custom new honors case sensitivity and does not pretend arbitrary RootResolver callbacks are static', () => {
 	const source = 'local C = require(game:GetService("ReplicatedStorage").Core.Shared.CustomRequirer)\nlocal r = C.new({Ancestors = { Systems = game:GetService("ServerScriptService").Systems }})(script)\nr("@systems/testsystem/server/main")';
 	assert.equal(check(source).diagnostics[0]?.code, 'cross-boundary');
-	const dynamic = 'local C = require(game:GetService("ReplicatedStorage").Core.Shared.CustomRequirer)\nlocal r = C.new({Ancestors = {}, RootResolver = function() return game:GetService("ServerScriptService"), 0 end})(script)\nr("@any/Module")';
+	const dynamic = 'local C = require(game:GetService("ReplicatedStorage").Core.Shared.CustomRequirer)\nlocal r = C.new({Ancestors = {}, RootResolver = getResolver()})(script)\nr("@any/Module")';
 	assert.deepEqual(check(dynamic).diagnostics.map(d => d.code), ['dynamic-requirer', 'dynamic-require']);
 });
 

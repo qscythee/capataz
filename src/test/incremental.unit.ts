@@ -6,7 +6,7 @@ import * as path from 'node:path';
 import * as os from 'node:os';
 import { nodeFs, ProjectFs } from '../core/fs';
 import { starterConfig } from '../core/init';
-import { configFileText } from '../core/project';
+import { configFileText, generate } from '../core/project';
 import { IncrementalLinter } from '../lint/incremental';
 import { checkProject } from '../lint/check';
 
@@ -20,10 +20,12 @@ async function fixture(t: TestContext) {
 	t.after(() => fs.rm(root, { recursive: true, force: true }));
 	const project = nodeFs(root);
 	await project.write('capataz.config.json', configFileText(starterConfig));
-	await project.write('src/Import.luau', 'return {}');
+	await project.write('src/Import.luau', await fs.readFile('templates/src/Import.luau', 'utf8'));
+	await project.write('src/Core/Shared/CustomRequirer/init.luau', 'return {}');
 	await project.write(client, source('Server'));
 	await project.write(shared, 'return {}');
 	await project.write(server, 'return {}');
+	await generate(project, starterConfig);
 	return project;
 }
 

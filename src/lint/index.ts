@@ -99,18 +99,8 @@ export function resolveCustom(index: ProjectIndex, caller: ModuleInfo, specifier
 	let target: string;
 	if (specifier.startsWith('@')) {
 		const [alias, ...parts] = specifier.slice(1).split('/');
-		let root = roots?.[alias] ?? Object.entries(roots ?? {}).find(([name]) => name.toLowerCase() === alias.toLowerCase())?.[1];
-		if (!roots) {
-			if (alias.toLowerCase() === 'systems') {
-				const route = resolveSystemRoute(index.config, parts[1] ?? '');
-				root = `${route?.service ?? 'ReplicatedStorage'}/Systems`;
-				if (route && parts.length > 1) { parts[1] = route.name; }
-			}
-			if (alias.toLowerCase() === 'core') {
-				root = parts[0]?.toLowerCase() === 'server' ? 'ServerScriptService/Core' : 'ReplicatedStorage/Core';
-				if (parts[0]?.toLowerCase() === 'server') { parts[0] = 'Server'; }
-			}
-		}
+		const root = roots?.[alias] ?? Object.entries(roots ?? {}).find(([name]) => name.toLowerCase() === alias.toLowerCase())?.[1];
+
 		if (!root) { return undefined; }
 		target = `${root}/${parts.join('/')}`;
 	} else {

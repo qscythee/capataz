@@ -13,10 +13,12 @@ import { buildProject, configFileText, generate, projectIssues, readConfig } fro
 test('init modules resolve relative imports through Roblox parents, not physical directory parents', async t => {
 	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'capataz-index-')); t.after(() => fs.rm(root, { recursive: true, force: true }));
 	const project = nodeFs(root), config = structuredClone(starterConfig);
-	await project.write('src/Import.luau', 'return {}');
+	await project.write('src/Import.luau', await fs.readFile('templates/src/Import.luau', 'utf8'));
+	await project.write('src/Core/Shared/CustomRequirer/init.luau', 'return {}');
 	await project.write('src/Systems/TestSystem/Shared/Wrapper/init.luau', 'local r = require(game:GetService("ReplicatedStorage").Import)(script)\nreturn r("./Sibling")');
 	await project.write('src/Systems/TestSystem/Shared/Sibling.luau', 'return {}');
 	await project.write('src/Systems/TestSystem/Shared/Wrapper/Sibling.luau', 'return {}');
+	await generate(project, config);
 	const result = await checkProject(project, config);
 	const edge = result.dependencies.find(e => e.file.endsWith('/Wrapper/init.luau') && e.custom);
 	assert.equal(edge?.target, 'src/Systems/TestSystem/Shared/Sibling.luau');
@@ -40,7 +42,8 @@ test('system routes are case-insensitive and support built-in services and custo
 		'src/Systems/TestSystem/ReplicatedFirst/Target.luau',
 		'src/Systems/TestSystem/Bootstrap/CustomTarget.luau',
 	];
-	await project.write('src/Import.luau', 'return {}');
+	await project.write('src/Import.luau', await fs.readFile('templates/src/Import.luau', 'utf8'));
+	await project.write('src/Core/Shared/CustomRequirer/init.luau', 'return {}');
 	await project.write('src/Core/Shared/CustomRequirer/init.luau', 'return {}');
 	for (const file of sources) {
 		await project.write(file, file.endsWith('Entry.luau')

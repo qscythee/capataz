@@ -1,7 +1,8 @@
 import { CONFIG_FILE_NAME } from '../config';
 import { ProjectFs } from '../core/fs';
 import { readConfig } from '../core/project';
-import { Analysis, analyzeSource } from './analyze';
+import { Analysis } from './analyze';
+import { AnalysisSession } from './session';
 import { createIndex, ProjectIndex } from './index';
 import { createLintIgnore } from './ignore';
 
@@ -10,6 +11,7 @@ export interface LintRequest { rebuild?: boolean; full?: boolean; files?: Iterab
 /** One instance per workspace. Callers serialize refreshes and abort superseded work. */
 export class IncrementalLinter {
 	private index?: ProjectIndex;
+	private session?: AnalysisSession;
 	private cache = new Map<string, string>();
 	private unindexed = new Set<string>();
 	private rebuildNeeded = true;
@@ -34,7 +36,7 @@ export class IncrementalLinter {
 		if (rebuild) {
 			if (!(await fs.exists(CONFIG_FILE_NAME))) {
 				const cleared = new Map([...this.cache.keys()].map(file => [file, { diagnostics: [], dependencies: [] } as Analysis]));
-				this.index = undefined; this.cache.clear(); this.unindexed.clear(); this.rebuildNeeded = true; return cleared;
+				this.index = undefined; this.session = undefined; this.cache.clear(); this.unindexed.clear(); this.rebuildNeeded = true; return cleared;
 			}
 			index = await createIndex(fs, await readConfig(fs));
 		}
@@ -43,16 +45,25 @@ export class IncrementalLinter {
 		const ignoresChanged = ignoreGlobs.length !== this.ignoreGlobs.length || ignoreGlobs.some((glob, i) => glob !== this.ignoreGlobs[i]);
 		const ignored = createLintIgnore([...(index.config.lint?.ignoreGlobs ?? []), ...ignoreGlobs]);
 		const full = rebuild || request.full || ignoresChanged;
+		const session = rebuild || ignoresChanged || !this.session ? new AnalysisSession(index, ignoreGlobs) : this.session.fork();
+		const changed = new Map<string, string>();
+		if (!full) {
+			for (const file of files) {
+				if (!index.modules.has(file) || ignored(file)) { continue; }
+				const source = overlays.get(file) ?? await fs.read(file);
+				if (this.cache.get(file) !== source) { changed.set(file, source); }
+			}
+		}
+		const affected = session.invalidate(full ? index.modules.keys() : changed.keys());
 		const updates = new Map<string, Analysis>();
 		const staged = new Map<string, string>();
 		let count = 0;
-		for (const file of full ? index.modules.keys() : files) {
+		for (const file of full ? index.modules.keys() : affected) {
 			signal.throwIfAborted();
 			const info = index.modules.get(file);
 			if (!info || ignored(file)) { continue; }
-			const source = overlays.get(file) ?? await fs.read(file);
-			if (!full && this.cache.get(file) === source) { continue; }
-			const analysis = analyzeSource(source, index, info);
+			const source = changed.get(file) ?? overlays.get(file) ?? (!full ? this.cache.get(file) : undefined) ?? await fs.read(file);
+			const analysis = await session.analyze(fs, info, { get: p => p === file ? source : overlays.get(p) }, signal);
 			staged.set(file, source); updates.set(file, analysis);
 			// Let document events cancel scans even when all sources are in memory.
 			if (++count % 16 === 0) { await new Promise<void>(resolve => setImmediate(resolve)); }
@@ -66,7 +77,7 @@ export class IncrementalLinter {
 		} else { for (const [file, value] of staged) { this.cache.set(file, value); } }
 		if (rebuild) { this.unindexed.clear(); }
 		for (const file of files) { if (!index.modules.has(file)) { this.unindexed.add(file); } }
-		this.index = index; this.rebuildNeeded = false; this.ignoreGlobs = [...ignoreGlobs];
+		this.session = session; this.index = index; this.rebuildNeeded = false; this.ignoreGlobs = [...ignoreGlobs];
 		return updates;
 	}
 }

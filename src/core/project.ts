@@ -48,7 +48,25 @@ export function configFileText(config: CapatazConfig): string {
 function validateLintConfig(config: CapatazConfig): void {
 	if (config.lint === undefined) { return; }
 	if (!config.lint || typeof config.lint !== 'object' || Array.isArray(config.lint)) { throw new Error('lint must be an object.'); }
-	const { rules, ignoreGlobs } = config.lint;
+	const { rules, ignoreGlobs, importFactories } = config.lint;
+	if (importFactories !== undefined) {
+		if (!importFactories || typeof importFactories !== 'object' || Array.isArray(importFactories)) { throw new Error('lint.importFactories must be an object keyed by project-relative factory module paths.'); }
+		for (const [file, environments] of Object.entries(importFactories)) {
+			if (!/\.lua[u]?$/.test(file) || file.includes('\\') || file.includes(':') || file.split('/').some(part => !part || part === '.' || part === '..')) { throw new Error('Invalid lint.importFactories module path: ' + file); }
+			if (!environments || typeof environments !== 'object' || Array.isArray(environments) || !Object.keys(environments).length) { throw new Error('Factory declarations require client and/or server mappings.'); }
+			for (const [environment, declaration] of Object.entries(environments)) {
+				if (!['client', 'server'].includes(environment) || !declaration || typeof declaration !== 'object' || Array.isArray(declaration)) { throw new Error('Factory declarations require client and/or server mappings.'); }
+				if (declaration.caseSensitive !== undefined && typeof declaration.caseSensitive !== 'boolean') { throw new Error('Factory caseSensitive must be a boolean.'); }
+				if (!declaration.aliases || typeof declaration.aliases !== 'object' || Array.isArray(declaration.aliases)) { throw new Error('Factory aliases must map names to service-rooted DataModel paths.'); }
+				const seen = new Set<string>();
+				for (const [alias, target] of Object.entries(declaration.aliases)) {
+					if (!/^[A-Za-z0-9_-]+$/.test(alias) || seen.has(alias.toLowerCase())) { throw new Error('Factory aliases must be unique names without @ or slashes.'); }
+					seen.add(alias.toLowerCase());
+					if (typeof target !== 'string' || target.includes('\\') || !ROBLOX_SERVICES.has(target.split('/')[0]) || target.split('/').some(part => !part.trim() || part === '.' || part === '..')) { throw new Error('Factory alias targets must be service-rooted DataModel paths.'); }
+				}
+			}
+		}
+	}
 	if (ignoreGlobs !== undefined && (!Array.isArray(ignoreGlobs) || ignoreGlobs.some(glob => typeof glob !== 'string' || !glob.trim()))) {
 		throw new Error('lint.ignoreGlobs must be an array of non-empty strings.');
 	}

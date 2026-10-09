@@ -89,6 +89,38 @@ This applies to CLI checks and editor diagnostics, including open or unsaved fil
 
 For editor-only exclusions, set `capataz.lint.ignoreGlobs` in VS Code settings. These patterns are added to the project configuration. Setting changes clear or restore diagnostics without restarting; edits still use incremental analysis.
 
+## Custom import factory inference
+
+Capataz infers aliases from the actual imported factory's `CustomRequirer.new` configuration. Literal `Ancestors` tables, tracked variables, Instance paths, and module re-exports are supported. A Rojo `$path` makes files available in the DataModel; it does not automatically create an import alias. Native `require` continues to use `.luaurc.aliases`.
+
+Factory summaries are evaluated separately for client and server. `RunService:IsClient()` / `IsServer()` guards and conditional expressions preserve environment-specific roots. Shared callers are checked in both environments. Two factories may define the same alias differently. There are no implicit `Core`, `Systems`, or package aliases: the factory must declare them.
+
+Simple `RootResolver` callbacks can be evaluated symbolically for each import: literal/Instance returns, local variables, conditionals, `string.lower`, segment indexing and a literal consumed-segment count. Generated `ServiceRoutes` tables are supported when passed to CustomRequirer. No project code is executed. Unknown branches, opaque calls, loops or unsupported callbacks produce a dynamic-import warning instead of an invented missing-module error. Missing targets on proven paths and boundary violations remain errors.
+
+For dynamic or ignored factory implementations, optionally declare the exported factory contract in top-level `lint.importFactories`:
+
+```json
+"lint": {
+  "importFactories": {
+    "src/DynamicImport.luau": {
+      "client": {
+        "aliases": { "Packages": "ReplicatedStorage/Packages" },
+        "caseSensitive": true
+      },
+      "server": {
+        "aliases": {
+          "Packages": "ReplicatedStorage/Packages",
+          "ServerPackages": "ServerStorage/ServerPackages"
+        },
+        "caseSensitive": true
+      }
+    }
+  }
+}
+```
+
+Keys are exact project-relative module filenames using forward slashes. Alias keys omit `@`; targets are service-rooted DataModel paths, not disk directories. Each declared environment replaces inference for that factory with the asserted complete alias map; undeclared environments still use inference. `caseSensitive` defaults to true for overrides. Declarations describe runtime behavior; they do not change it or suppress boundary checks. Ignored modules stay indexed but are not parsed for exports unless an explicit declaration supplies the contract. Config changes refresh the editor automatically.
+
 ## Runtime boundary linting
 
 | Requiring code | Allowed targets |
@@ -103,9 +135,9 @@ VS Code reports errors in the Problems panel and refreshes on unsaved edits, sou
 
 Live checks debounce edits by 250 ms and cache each workspace's module index and source text. Ordinary edits analyze only changed files; unchanged save notifications skip analysis, and diagnostics on other files stay visible. Newer events cancel obsolete scans between filesystem operations and file batches, and scans run serially. Closing an unsaved document checks its disk contents again.
 
-Startup, explicit checks, source creation/deletion/renames, and changes to metadata, `.luaurc`, Capataz config, or Rojo project files rebuild the index and recheck the workspace, including unresolved imports. Removing the opt-in config clears the workspace's lint diagnostics. Imported source contents do not require rechecking callers because this analyzer does not infer exported values across files. CLI checks still scan the full project. Individual file analysis remains synchronous, so exceptionally large or complex files can still occupy the extension host while being analyzed.
+Startup, explicit checks, source creation/deletion/renames, and changes to metadata, `.luaurc`, Capataz config, or Rojo project files rebuild the index and recheck the workspace, including unresolved imports. Removing the opt-in config clears the workspace's lint diagnostics. Factory/module export summaries are cached per client/server runtime. Changes to imported sources invalidate their transitive callers; unrelated edits retain the cached index and summaries. CLI checks still scan the full project. Individual file analysis remains synchronous, so exceptionally large or complex files can still occupy the extension host while being analyzed.
 
-The checker tokenizes Luau and tracks scoped bindings. It recognizes the canonical `src/Import.luau` factory and `src/Core/Shared/CustomRequirer/init.luau`, regardless of local variable names:
+The checker tokenizes Luau and tracks scoped bindings. It recognizes `src/Core/Shared/CustomRequirer/init.luau` as the CustomRequirer implementation and follows factory exports through imported modules, regardless of local variable names or factory location:
 
 ```luau
 local factory = require(game:GetService("ReplicatedStorage").Import)

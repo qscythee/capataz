@@ -13,7 +13,13 @@ export interface CapatazLintRules {
 	'dynamic-require'?: 'off' | 'warn';
 }
 
+export interface ImportFactoryDeclaration {
+	aliases: Record<string, string>;
+	caseSensitive?: boolean;
+}
+
 export interface CapatazLintConfig {
+	importFactories?: Record<string, { client?: ImportFactoryDeclaration; server?: ImportFactoryDeclaration }>;
 	ignoreGlobs?: string[];
 	rules?: CapatazLintRules;
 }

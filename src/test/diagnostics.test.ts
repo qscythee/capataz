@@ -11,6 +11,11 @@ suite('Capataz editor boundary diagnostics', () => {
 		const output = vscode.window.createOutputChannel('Capataz Diagnostic Tests');
 		try {
 			await initializeProject(root, output, vscode.Uri.file(path.resolve(__dirname, '../..')));
+			// The reusable test workspace may contain older, intentionally preserved init templates.
+			for (const file of ['src/Import.luau', 'src/Core/Shared/CustomRequirer/init.luau']) {
+				const template = vscode.Uri.file(path.resolve(__dirname, '../../templates', file));
+				await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(root, file), await vscode.workspace.fs.readFile(template));
+			}
 			const extension = vscode.extensions.all.find(e => e.packageJSON.name === 'capataz');
 			assert.ok(extension, 'Capataz extension must be installed in the development host'); await extension.activate();
 			const uri = vscode.Uri.joinPath(root, 'src/Systems/CounterSystem/Client/BoundaryTest.luau');
@@ -115,6 +120,42 @@ suite('Capataz editor boundary diagnostics', () => {
 			await waitFor(hasError); await document.save();
 		} finally {
 			await configuration.update('lint.ignoreGlobs', previous, vscode.ConfigurationTarget.WorkspaceFolder);
+			await vscode.workspace.fs.delete(uri);
+		}
+	});
+
+	test('editing an imported factory refreshes callers in change and save modes', async function () {
+		this.timeout(20000);
+		const root = vscode.workspace.workspaceFolders?.[0]?.uri; assert.ok(root);
+		const configuration = vscode.workspace.getConfiguration('capataz', root);
+		const previous = configuration.inspect<string>('lint.run')?.workspaceFolderValue;
+		const factory = vscode.Uri.joinPath(root, 'src/Import.luau');
+		const original = await vscode.workspace.fs.readFile(factory);
+		const uri = vscode.Uri.joinPath(root, 'src/Systems/CounterSystem/Client/FactoryBoundaryTest.luau');
+		const hasError = () => vscode.languages.getDiagnostics(uri).some(d => d.source === 'Capataz' && d.code === 'unresolved-require');
+		const waitFor = async (predicate: () => boolean) => {
+			const deadline = Date.now() + 6000;
+			while (!predicate() && Date.now() < deadline) { await new Promise(resolve => setTimeout(resolve, 50)); }
+			assert.ok(predicate(), 'Expected factory-dependent diagnostic update');
+		};
+		const document = await vscode.workspace.openTextDocument(factory);
+		const replace = async (text: string) => {
+			const edit = new vscode.WorkspaceEdit(); edit.replace(factory, new vscode.Range(document.positionAt(0), document.positionAt(document.getText().length)), text);
+			assert.ok(await vscode.workspace.applyEdit(edit));
+		};
+		try {
+			await configuration.update('lint.run', 'onChange', vscode.ConfigurationTarget.WorkspaceFolder);
+			await vscode.workspace.fs.writeFile(uri, Buffer.from('local r = require(game:GetService("ReplicatedStorage").Import)(script) return r("@Extra/CounterSystem/Shared/Counter")'));
+			await vscode.commands.executeCommand('capataz.check'); await waitFor(hasError);
+			const edited = Buffer.from(original).toString('utf8').replace('Core = ReplicatedStorage.Core,', 'Core = ReplicatedStorage.Core, Extra = ReplicatedStorage.Systems,');
+			assert.notEqual(edited, Buffer.from(original).toString('utf8'));
+			await replace(edited); await waitFor(() => !hasError()); assert.ok(document.isDirty);
+			await configuration.update('lint.run', 'onSave', vscode.ConfigurationTarget.WorkspaceFolder); await waitFor(hasError);
+			assert.ok(await document.save()); await waitFor(() => !hasError());
+			await replace(Buffer.from(original).toString('utf8')); assert.ok(await document.save()); await waitFor(hasError);
+		} finally {
+			await replace(Buffer.from(original).toString('utf8')); await document.save();
+			await configuration.update('lint.run', previous, vscode.ConfigurationTarget.WorkspaceFolder);
 			await vscode.workspace.fs.delete(uri);
 		}
 	});
