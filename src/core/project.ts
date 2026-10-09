@@ -48,7 +48,10 @@ export function configFileText(config: CapatazConfig): string {
 function validateLintConfig(config: CapatazConfig): void {
 	if (config.lint === undefined) { return; }
 	if (!config.lint || typeof config.lint !== 'object' || Array.isArray(config.lint)) { throw new Error('lint must be an object.'); }
-	const { rules } = config.lint;
+	const { rules, ignoreGlobs } = config.lint;
+	if (ignoreGlobs !== undefined && (!Array.isArray(ignoreGlobs) || ignoreGlobs.some(glob => typeof glob !== 'string' || !glob.trim()))) {
+		throw new Error('lint.ignoreGlobs must be an array of non-empty strings.');
+	}
 	if (rules === undefined) { return; }
 	if (!rules || typeof rules !== 'object' || Array.isArray(rules)) { throw new Error('lint.rules must be an object.'); }
 	for (const [rule, level] of Object.entries(rules)) {

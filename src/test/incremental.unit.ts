@@ -113,3 +113,55 @@ test('index construction and entirely in-memory scans are cancellable', async t 
 	await assert.rejects(linter.refresh({ files: overlays.keys() }, overlays, next.signal), { name: 'AbortError' });
 	assert.equal((await linter.refresh({ files: overlays.keys() }, overlays)).size, 40);
 });
+
+
+test('ignore globs skip package sources but preserve import resolution and boundaries', async t => {
+	const project = await fixture(t);
+	const config = structuredClone(starterConfig);
+	(config.tree.ReplicatedStorage as CapatazTreeNode).Packages = { $path: 'Packages' };
+	config.tree.ServerStorage = { ServerPackages: { $path: 'ServerPackages' } };
+	const packageFile = 'Packages/.hidden/_Index/Module.luau';
+	const serverPackage = 'ServerPackages/Module.luau';
+	await project.write(packageFile, 'return require("./missing")');
+	await project.write(serverPackage, 'return require("./missing")');
+	await project.write(client, 'local a = require(game:GetService("ReplicatedStorage").Packages[".hidden"]._Index.Module)\nreturn require(game:GetService("ServerStorage").ServerPackages.Module)');
+	await project.write('capataz.config.json', configFileText(config));
+	const reads: string[] = [];
+	const counted: ProjectFs = { ...project, read: p => { reads.push(p); return project.read(p); } };
+	const linter = new IncrementalLinter(counted);
+	const initial = await linter.refresh({});
+	assert.ok(initial.get(packageFile)?.diagnostics.length);
+	assert.ok(initial.get(serverPackage)?.diagnostics.length);
+	config.lint = { ignoreGlobs: ['**/Packages/**', '**/ServerPackages/**'] };
+	await project.write('capataz.config.json', configFileText(config)); reads.length = 0;
+	const updates = await linter.refresh({ rebuild: true });
+	assert.deepEqual(updates.get(packageFile)?.diagnostics, []);
+	assert.deepEqual(updates.get(serverPackage)?.diagnostics, []);
+	assert.deepEqual(updates.get(client)?.diagnostics.map(d => d.code), ['cross-boundary']);
+	assert.ok(!reads.includes(packageFile) && !reads.includes(serverPackage));
+	reads.length = 0;
+	assert.equal((await linter.refresh({ files: [packageFile] }, new Map([[packageFile, 'require(broken)']]))).size, 0);
+	assert.equal(reads.length, 0);
+	const result = await checkProject(counted, config);
+	assert.ok(result.index.modules.has(packageFile));
+	assert.equal(result.files, result.index.modules.size - 2);
+	assert.deepEqual(result.diagnostics.map(d => d.code), ['cross-boundary']);
+	assert.ok(!reads.includes(packageFile) && !reads.includes(serverPackage));
+	config.lint.ignoreGlobs = [];
+	await project.write('capataz.config.json', configFileText(config));
+	assert.ok((await linter.refresh({ rebuild: true })).get(packageFile)?.diagnostics.length);
+});
+
+test('editor ignores combine with project ignores and clear or restore cached diagnostics', async t => {
+	const project = await fixture(t);
+	const other = client.replace('Main', 'Other'); await project.write(other, source('Server'));
+	const config = structuredClone(starterConfig); config.lint = { ignoreGlobs: [other] };
+	await project.write('capataz.config.json', configFileText(config));
+	const linter = new IncrementalLinter(project);
+	assert.ok((await linter.refresh({})).get(client)?.diagnostics.length);
+	let updates = await linter.refresh({ ignoreGlobs: ['**/Main.luau'] });
+	assert.deepEqual(updates.get(client)?.diagnostics, []); assert.ok(!updates.has(other));
+	assert.equal((await linter.refresh({ files: [client] }, new Map([[client, source('Server')]]))).size, 0);
+	updates = await linter.refresh({ ignoreGlobs: [] });
+	assert.ok(updates.get(client)?.diagnostics.length); assert.ok(!updates.has(other));
+});

@@ -89,4 +89,33 @@ suite('Capataz editor boundary diagnostics', () => {
 			await vscode.workspace.fs.delete(uri);
 		}
 	});
+
+	test('ignore settings clear diagnostics for open files and restore them without restarting', async function () {
+		this.timeout(15000);
+		const root = vscode.workspace.workspaceFolders?.[0]?.uri; assert.ok(root);
+		const configuration = vscode.workspace.getConfiguration('capataz', root);
+		const previous = configuration.inspect<string[]>('lint.ignoreGlobs')?.workspaceFolderValue;
+		const uri = vscode.Uri.joinPath(root, 'src/Systems/CounterSystem/Client/IgnoreBoundaryTest.luau');
+		const hasError = () => vscode.languages.getDiagnostics(uri).some(d => d.source === 'Capataz' && d.code === 'cross-boundary');
+		const waitFor = async (predicate: () => boolean) => {
+			const deadline = Date.now() + 6000;
+			while (!predicate() && Date.now() < deadline) { await new Promise(resolve => setTimeout(resolve, 50)); }
+			assert.ok(predicate(), 'Expected diagnostic update before timeout');
+		};
+		try {
+			await vscode.workspace.fs.writeFile(uri, Buffer.from('return require(game:GetService("ServerScriptService").Systems.CounterSystem.Server.CounterService)'));
+			const document = await vscode.workspace.openTextDocument(uri);
+			await vscode.commands.executeCommand('capataz.check'); await waitFor(hasError);
+			await configuration.update('lint.ignoreGlobs', ['**/IgnoreBoundaryTest.luau'], vscode.ConfigurationTarget.WorkspaceFolder);
+			await waitFor(() => !hasError());
+			const edit = new vscode.WorkspaceEdit(); edit.insert(uri, document.positionAt(0), '-- unsaved edit\n');
+			assert.ok(await vscode.workspace.applyEdit(edit));
+			await vscode.commands.executeCommand('capataz.check'); assert.ok(!hasError());
+			await configuration.update('lint.ignoreGlobs', [], vscode.ConfigurationTarget.WorkspaceFolder);
+			await waitFor(hasError); await document.save();
+		} finally {
+			await configuration.update('lint.ignoreGlobs', previous, vscode.ConfigurationTarget.WorkspaceFolder);
+			await vscode.workspace.fs.delete(uri);
+		}
+	});
 });

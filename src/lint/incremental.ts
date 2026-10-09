@@ -3,8 +3,9 @@ import { ProjectFs } from '../core/fs';
 import { readConfig } from '../core/project';
 import { Analysis, analyzeSource } from './analyze';
 import { createIndex, ProjectIndex } from './index';
+import { createLintIgnore } from './ignore';
 
-export interface LintRequest { rebuild?: boolean; full?: boolean; files?: Iterable<string> }
+export interface LintRequest { rebuild?: boolean; full?: boolean; files?: Iterable<string>; ignoreGlobs?: readonly string[] }
 
 /** One instance per workspace. Callers serialize refreshes and abort superseded work. */
 export class IncrementalLinter {
@@ -12,6 +13,7 @@ export class IncrementalLinter {
 	private cache = new Map<string, string>();
 	private unindexed = new Set<string>();
 	private rebuildNeeded = true;
+	private ignoreGlobs: readonly string[] = [];
 	constructor(private fs: ProjectFs) {}
 
 	async refresh(request: LintRequest, overlays: Pick<ReadonlyMap<string, string>, 'get'> = new Map(), signal = new AbortController().signal): Promise<Map<string, Analysis>> {
@@ -37,14 +39,17 @@ export class IncrementalLinter {
 			index = await createIndex(fs, await readConfig(fs));
 		}
 		if (!index) { throw new Error('Project index is unavailable.'); }
-		const full = rebuild || request.full;
+		const ignoreGlobs = request.ignoreGlobs ?? this.ignoreGlobs;
+		const ignoresChanged = ignoreGlobs.length !== this.ignoreGlobs.length || ignoreGlobs.some((glob, i) => glob !== this.ignoreGlobs[i]);
+		const ignored = createLintIgnore([...(index.config.lint?.ignoreGlobs ?? []), ...ignoreGlobs]);
+		const full = rebuild || request.full || ignoresChanged;
 		const updates = new Map<string, Analysis>();
 		const staged = new Map<string, string>();
 		let count = 0;
 		for (const file of full ? index.modules.keys() : files) {
 			signal.throwIfAborted();
 			const info = index.modules.get(file);
-			if (!info) { continue; }
+			if (!info || ignored(file)) { continue; }
 			const source = overlays.get(file) ?? await fs.read(file);
 			if (!full && this.cache.get(file) === source) { continue; }
 			const analysis = analyzeSource(source, index, info);
@@ -61,7 +66,7 @@ export class IncrementalLinter {
 		} else { for (const [file, value] of staged) { this.cache.set(file, value); } }
 		if (rebuild) { this.unindexed.clear(); }
 		for (const file of files) { if (!index.modules.has(file)) { this.unindexed.add(file); } }
-		this.index = index; this.rebuildNeeded = false;
+		this.index = index; this.rebuildNeeded = false; this.ignoreGlobs = [...ignoreGlobs];
 		return updates;
 	}
 }

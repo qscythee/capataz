@@ -43,7 +43,7 @@ export function registerDiagnostics(context: vscode.ExtensionContext, output: vs
 						}
 					}
 					// Fetch text lazily: an edit must not copy every other open document.
-					const updates = await state.linter.refresh(request, { get: file => useUnsaved ? documents.get(file)?.getText() : undefined }, controller.signal);
+					const updates = await state.linter.refresh({ ...request, ignoreGlobs: vscode.workspace.getConfiguration('capataz', state.folder.uri).get<string[]>('lint.ignoreGlobs', []) }, { get: file => useUnsaved ? documents.get(file)?.getText() : undefined }, controller.signal);
 					controller.signal.throwIfAborted();
 					collection.delete(vscode.Uri.joinPath(state.folder.uri, CONFIG_FILE_NAME));
 					for (const [file, analysis] of updates) {
@@ -103,7 +103,7 @@ export function registerDiagnostics(context: vscode.ExtensionContext, output: vs
 		vscode.workspace.onDidChangeConfiguration(event => {
 			let affected = false;
 			for (const state of workspaces.values()) {
-				if (event.affectsConfiguration('capataz.lint.run', state.folder.uri)) {
+				if (event.affectsConfiguration('capataz.lint.run', state.folder.uri) || event.affectsConfiguration('capataz.lint.ignoreGlobs', state.folder.uri)) {
 					const request = state.pending ??= pending(); request.full = true; affected = true;
 				}
 			}

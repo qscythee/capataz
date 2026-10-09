@@ -75,6 +75,20 @@ Then put the routed modules in `src/Systems/<Name>System/Bootstrap/`. Capataz mo
 
 Capataz requires `emitLegacyScripts: false`. This lets Rojo use modern `Script` instances with suffix-derived `RunContext`; the `.client.luau` bootstrap under `src/Core/Client` is a client-context Script mounted at `ReplicatedStorage.Core.Client`. `src/Core/First` is mounted at `ReplicatedFirst.Core.First`. Explicit system routes, such as a folder mapped to `ReplicatedFirst`, remain available.
 
+## Ignoring lint files
+
+Add a top-level lint setting alongside project in capataz.config.json (not in .luaurc):
+
+```json
+"lint": {
+  "ignoreGlobs": ["**/Packages/**", "**/ServerPackages/**"]
+}
+```
+
+This applies to CLI checks and editor diagnostics, including open or unsaved files. Patterns match project-relative paths using minimatch glob syntax (including hidden directories); use forward slashes. Patterns are additive exclusions, without leading-! negation. An omitted or empty list ignores nothing. Ignored modules remain indexed so imports into them still resolve and boundary violations in your own code are checked. Their source is not linted and their outgoing dependencies are omitted from check/graph results.
+
+For editor-only exclusions, set `capataz.lint.ignoreGlobs` in VS Code settings. These patterns are added to the project configuration. Setting changes clear or restore diagnostics without restarting; edits still use incremental analysis.
+
 ## Runtime boundary linting
 
 | Requiring code | Allowed targets |

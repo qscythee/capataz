@@ -14,6 +14,7 @@ export interface CapatazLintRules {
 }
 
 export interface CapatazLintConfig {
+	ignoreGlobs?: string[];
 	rules?: CapatazLintRules;
 }
 

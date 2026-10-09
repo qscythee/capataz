@@ -45,6 +45,16 @@
           "default": "onChange",
           "scope": "resource",
           "description": "When Capataz updates Luau import and runtime boundary diagnostics. Project structure and configuration changes always trigger checks."
+        },
+        "capataz.lint.ignoreGlobs": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "default": [],
+          "scope": "resource",
+          "description": "Project-relative globs excluded from Capataz linting, including open files. Added to lint.ignoreGlobs in capataz.config.json. Ignored modules remain available for import resolution."
         }
       }
     },
@@ -122,5 +132,8 @@
   "overrides": {
     "diff": "^8.0.4",
     "serialize-javascript": "^7.0.6"
+  },
+  "dependencies": {
+    "minimatch": "^10.2.6"
   }
 }
