@@ -1,13 +1,15 @@
+import { selectLayout, layouts, routeFile, selectSystemRoot } from './core/layout';
+import { watchProject } from './core/watch';
+import { checkTargets, lintTargets } from './lint/targets';
 import * as path from 'node:path';
 import { parseArgs } from 'node:util';
 import { createInterface } from 'node:readline/promises';
 import { spawn } from 'node:child_process';
-import { watch } from 'node:fs';
 import { isSea } from 'node:sea';
 import { CONFIG_FILE_NAME, defaultSystemsDir } from './config';
 import { nodeFs, walk } from './core/fs';
 import { initialize } from './core/init';
-import { buildProject, generate, newSystem, projectIssues, projectText, readConfig, resolveSystemRoute, systemName } from './core/project';
+import { buildProject, generate, newSystem, projectIssues, projectText, readConfig, discoverSystems, existingSystem, defaultProjectFile, projectFilePath, generateConsumers, validateSystemMutation } from './core/project';
 import { previewFs } from './core/preview';
 import { checkProject, CheckResult } from './lint/check';
 import { embeddedTemplates } from './templates';
@@ -15,16 +17,16 @@ import { normalize } from './lint/index';
 
 const commands: [string, string][] = [
 	['init', 'Initialize or adopt a project, preserving authored files'],
-	['system new <name>', 'Create Client/Server/Shared directories and regenerate'],
-	['system remove <name>', 'Remove a system after confirmation and regenerate'],
-	['system list', 'List systems and their available runtime parts'],
+	['system new <path>', 'Create a system at a slash-separated path and regenerate'],
+	['system remove <path>', 'Remove a system after confirmation and regenerate'],
+	['system list', 'List full system paths and their available runtime parts'],
 	['project generate', 'Generate the Rojo project and runtime route table'],
 	['project check', 'Validate config/mounts and generated project freshness'],
 	['check', 'Check imports and Client/Server/Shared boundaries'],
 	['explain <file>', 'Show reachable imports and dependency paths to problems'],
 	['graph', 'Export dependencies as JSON or Graphviz DOT'],
 	['doctor', 'Check project health and availability of external tools'],
-	['dev', 'Watch project structure; run Rojo serve and sourcemap watch'],
+	['watch [project-file]', 'Watch, regenerate and lint; never launch external tools'],
 ];
 const options: [string, string][] = [
 	['--root <directory>', 'Project root (default: current directory)'],
@@ -32,7 +34,10 @@ const options: [string, string][] = [
 	['--dry-run', 'Preview init/new/remove/generate without writing files'],
 	['--yes', 'Confirm system removal for automation'],
 	['--strict', 'Fail check/doctor/explain on all warnings too'],
-	['--port <number>', 'Rojo serve port (dev)'],
+	['--project-file <path>', 'Select project file (init/system/project commands)'],
+	['--systems-root <name>', 'Select a reusable source root for system commands'],
+	['--target <name>', 'Select a named project layout or lint target'],
+	['--all-targets', 'Check lint targets or generate/check all project layouts'],
 	['--help, -h', 'Show command help'],
 	['--version, -v', 'Show Capataz version'],
 ];
@@ -55,11 +60,11 @@ Exit codes: 0 success, 1 check failures, 2 usage/config/tool failures.
 declare const CAPATAZ_VERSION: string;
 const VERSION = typeof CAPATAZ_VERSION === 'string' ? CAPATAZ_VERSION : 'development';
 function emit(value: unknown, format: string, text: string): void { process.stdout.write((format === 'json' ? JSON.stringify(value, null, 2) : text) + '\n'); }
-function diagnosticText(result: CheckResult): string {
+function diagnosticText(result: Pick<CheckResult, 'files' | 'diagnostics'>): string {
 	return [...result.diagnostics.map(d => `${d.file}:${d.line}:${d.column}: ${d.severity} [${d.code}] ${d.message}`), `Checked ${result.files} files: ${result.diagnostics.filter(d => d.severity === 'error').length} errors, ${result.diagnostics.filter(d => d.severity === 'warning').length} warnings.`].join('\n');
 }
-function summary(result: CheckResult): object { return { files: result.files, diagnostics: result.diagnostics, dependencies: result.dependencies }; }
-function failed(result: CheckResult, strict: boolean): boolean { return result.diagnostics.some(d => strict || d.severity === 'error'); }
+function summary(result: Pick<CheckResult, 'files' | 'diagnostics' | 'dependencies'>): object { return { files: result.files, diagnostics: result.diagnostics, dependencies: result.dependencies }; }
+function failed(result: Pick<CheckResult, 'diagnostics'>, strict: boolean): boolean { return result.diagnostics.some(d => strict || d.severity === 'error'); }
 
 async function toolVersion(tool: string, root: string): Promise<{ tool: string; available: boolean; version?: string; error?: string }> {
 	return new Promise(resolve => {
@@ -73,104 +78,76 @@ async function toolVersion(tool: string, root: string): Promise<{ tool: string; 
 	});
 }
 
-async function dev(root: string, port?: string): Promise<number> {
-	const fs = nodeFs(root);
-	await generate(fs, await readConfig(fs));
-	const children = [spawn('rojo', ['serve', 'default.project.json', ...(port ? ['--port', port] : [])], { cwd: root, windowsHide: true, stdio: 'inherit' }), spawn('rojo', ['sourcemap', '--include-non-scripts', '--watch', 'default.project.json', '--output', 'sourcemap.json'], { cwd: root, windowsHide: true, stdio: 'inherit' })];
-	const closed = children.map(child => new Promise<void>(resolve => child.once('close', () => resolve())));
-	return new Promise(resolve => {
-		let stopped = false, timer: ReturnType<typeof setTimeout> | undefined, running = false, pending = false;
-		let regeneration = Promise.resolve();
-		const stop = (code: number) => {
-			if (stopped) { return; } stopped = true;
-			if (timer) { clearTimeout(timer); } watcher.close();
-			process.off('SIGINT', interrupt); process.off('SIGTERM', interrupt);
-			for (const child of children) { child.kill(); }
-			void Promise.all([...closed, regeneration]).then(() => resolve(code));
-		};
-		const interrupt = () => stop(0);
-		const regenerate = async () => {
-			if (running) { pending = true; return; } running = true;
-			try {
-				do {
-					pending = false;
-					if (await generate(fs, await readConfig(fs))) { console.log('Regenerated project and system routes'); }
-				} while (pending && !stopped);
-			} catch (error) { console.error(`Capataz: ${(error as Error).message}`); }
-			finally { running = false; }
-		};
-		let watcher: ReturnType<typeof watch>;
-		try { watcher = watch(root, { recursive: true }, (_event, filename) => {
-			const file = filename?.toString().replace(/\\/g, '/');
-			if (!file || /(^|\/)(node_modules|\.git|\.capataz)(\/|$)/.test(file) || ['default.project.json', 'sourcemap.json'].includes(file)) { return; }
-			if (timer) { clearTimeout(timer); } timer = setTimeout(() => { if (running) { pending = true; } else { regeneration = regenerate(); } }, 200);
-		}); } catch (error) { for (const child of children) { child.on('error', () => {}); child.kill(); } throw error; }
-		watcher.on('error', error => { console.error(error.message); stop(2); });
-		for (const child of children) {
-			child.on('error', error => { console.error(`Cannot start Rojo: ${error.message}`); stop(2); });
-			child.on('exit', code => { if (!stopped) { stop(code === 0 ? 0 : 2); } });
-		}
-		process.on('SIGINT', interrupt); process.on('SIGTERM', interrupt);
-		console.log('Watching project structure. Press Ctrl+C to stop.');
-	});
-}
-
 export async function main(args: string[]): Promise<number> {
 	const parsed = parseArgs({ args, allowPositionals: true, options: {
-		root: { type: 'string' }, format: { type: 'string' }, 'dry-run': { type: 'boolean' }, yes: { type: 'boolean' }, strict: { type: 'boolean' }, port: { type: 'string' }, help: { type: 'boolean', short: 'h' }, version: { type: 'boolean', short: 'v' },
+		root: { type: 'string' }, format: { type: 'string' }, 'dry-run': { type: 'boolean' }, yes: { type: 'boolean' }, strict: { type: 'boolean' }, 'systems-root': { type: 'string' }, 'project-file': { type: 'string' }, target: { type: 'string' }, 'all-targets': { type: 'boolean' }, help: { type: 'boolean', short: 'h' }, version: { type: 'boolean', short: 'v' },
 	} });
 	const { values, positionals } = parsed;
 	if (values.version) { console.log(VERSION); return 0; }
 	if (values.help || !positionals.length) { console.log(HELP); return 0; }
 	const [command, subcommand, name] = positionals;
 	const signature = command === 'system' || command === 'project' ? `${command} ${subcommand}` : command;
-	const arities: Record<string, number> = { init: 1, 'system new': 3, 'system remove': 3, 'system list': 2, 'project generate': 2, 'project check': 2, check: 1, explain: 2, graph: 1, doctor: 1, dev: 1 };
-	if (!(signature in arities) || positionals.length !== arities[signature]) { throw new Error(`Invalid command or arguments: ${positionals.join(' ')}. Run capataz --help.`); }
+	const arities: Record<string, number> = { init: 1, 'system new': 3, 'system remove': 3, 'system list': 2, 'project generate': 2, 'project check': 2, check: 1, explain: 2, graph: 1, doctor: 1, watch: 1 };
+	if (!(signature in arities) || (positionals.length !== arities[signature] && !(signature === 'watch' && positionals.length === 2))) { throw new Error(`Invalid command or arguments: ${positionals.join(' ')}. Run capataz --help.`); }
 	const format = values.format ?? (command === 'graph' ? 'json' : 'text');
-	if (!['text', 'json', ...(command === 'graph' ? ['dot'] : [])].includes(format) || command === 'dev' && format !== 'text') { throw new Error(`Unsupported output format for ${signature}: ${format}`); }
+	if (!['text', 'json', ...(command === 'graph' ? ['dot'] : [])].includes(format) || command === 'watch' && format !== 'text') { throw new Error(`Unsupported output format for ${signature}: ${format}`); }
 	const mutates = ['init', 'system new', 'system remove', 'project generate'].includes(signature);
 	if (values['dry-run'] && !mutates) { throw new Error('--dry-run is only supported for init, system new/remove, and project generate.'); }
 	if (values.yes && signature !== 'system remove') { throw new Error('--yes is only supported for system remove.'); }
-	if (values.port && (command !== 'dev' || !/^\d+$/.test(values.port) || Number(values.port) < 1 || Number(values.port) > 65535)) { throw new Error('--port must be a number from 1 to 65535 for dev.'); }
+	if (values.target && !['check', 'explain', 'graph', 'init', 'system', 'project'].includes(command)) { throw new Error('--target is supported for init, system, project, check, explain and graph.'); }
+	if (values['all-targets'] && command !== 'check' && !['project generate', 'project check'].includes(signature)) { throw new Error('--all-targets is supported for check and project generate/check.'); }
+	if (values['project-file'] !== undefined && values['all-targets']) { throw new Error('Choose --project-file or --all-targets, not both.'); }
+	if (values.target && values['all-targets']) { throw new Error('Choose --target or --all-targets, not both.'); }
+	if (values['project-file'] !== undefined && !['init', 'system new', 'system remove', 'system list', 'project generate', 'project check'].includes(signature)) { throw new Error('--project-file is supported for init, system new/remove, and project generate/check. Watch accepts a positional project file.'); }
+	if (values.target && values['project-file'] !== undefined) { throw new Error('Choose --target or --project-file, not both.'); }
+	let outputFile = values['project-file'] === undefined ? undefined : projectFilePath(values['project-file']);
+	if (values['systems-root'] !== undefined && command !== 'system') { throw new Error('--systems-root is only supported for system commands.'); }
 	const root = path.resolve(values.root ?? process.cwd());
 	const base = nodeFs(root), preview = values['dry-run'] ? previewFs(base) : undefined, fs = preview?.fs ?? base;
 	const outputMutation = (value: object, message: string) => emit({ ...value, ...(preview ? { dryRun: true, changes: preview.changes } : {}) }, format, preview ? `Dry run:\n${preview.changes.join('\n')}` : message);
-	if (command === 'init') { const created = await initialize(fs, embeddedTemplates()); outputMutation({ created }, `Initialized project (${created.length} new files/directories).`); return 0; }
-	const config = await readConfig(fs);
+	if (values.target && ['init', 'system', 'project'].includes(command)) {
+		const layout = (await readConfig(fs)).projects?.[values.target];
+		if (!layout) { throw new Error(`Unknown project layout '${values.target}'.`); }
+		outputFile = layout.projectFile;
+	}
+	if (command === 'init') { const created = await initialize(fs, embeddedTemplates(), outputFile); outputMutation({ created }, `Initialized project (${created.length} new files/directories).`); return 0; }
+	const workspaceConfig = await readConfig(fs);
+	const layout = selectLayout(workspaceConfig, outputFile);
+	const config = command === 'system' ? selectSystemRoot(layout, values['systems-root']) : layout;
 	if (signature === 'system new') { const system = await newSystem(fs, config, name); outputMutation({ system }, `Created ${system}.`); return 0; }
 	if (signature === 'system list') {
-		const systems = [];
-		for (const [system, directory] of await fs.entries(defaultSystemsDir(config))) {
-			if (directory) {
-				const parts = [];
-				for (const [part, isDirectory] of await fs.entries(`${defaultSystemsDir(config)}/${system}`)) {
-					const route = isDirectory ? resolveSystemRoute(config, part) : undefined;
-					if (route) { parts.push(route.name); }
-				}
-				systems.push({ name: system, parts });
-			}
-		}
+		const systems = (await discoverSystems(fs, config)).map(system => ({ name: system.name, parts: system.parts.map(part => part.route.name) }));
 		systems.sort((a, b) => a.name.localeCompare(b.name)); emit(systems, format, systems.map(s => `${s.name}: ${s.parts.join(', ')}`).join('\n') || 'No systems.'); return 0;
 	}
 	if (signature === 'system remove') {
-		const system = systemName(name), directory = `${defaultSystemsDir(config)}/${system}`;
+		const system = await existingSystem(fs, config, name), directory = `${defaultSystemsDir(config)}/${system}`;
 		if (!(await fs.exists(directory))) { throw new Error(`System '${system}' does not exist.`); }
+		await validateSystemMutation(fs, config);
 		if (!preview && !values.yes) {
 			if (!process.stdin.isTTY || format === 'json') { throw new Error('System removal requires --yes in non-interactive mode; use --dry-run to review it first.'); }
 			const readline = createInterface({ input: process.stdin, output: process.stderr });
 			try { if (await readline.question(`Permanently remove ${directory}? Type ${system} to confirm: `) !== system) { emit({ cancelled: true }, format, 'Cancelled.'); return 0; } } finally { readline.close(); }
 		}
-		const files = await walk(fs, directory); await fs.remove(directory); await generate(fs, config);
+		const files = await walk(fs, directory); await fs.remove(directory); await generateConsumers(fs, config);
 		outputMutation({ system, files }, `Removed ${system} (${files.length} files).`); return 0;
 	}
-	if (signature === 'project generate') { await generate(fs, config); outputMutation({ file: 'default.project.json', routeFile: 'src/Core/Shared/CustomRequirer/SystemRoutes.luau' }, 'Wrote project and system routes'); return 0; }
-	if (command === 'dev') { return dev(root, values.port); }
+	if (signature === 'project generate') {
+		const selected = values['all-targets'] ? layouts(workspaceConfig) : [config];
+		for (const layout of selected) { await generate(fs, layout); }
+		outputMutation({ file: defaultProjectFile(config), routeFile: routeFile(config), outputs: selected.map(layout => ({ file: defaultProjectFile(layout), routeFile: routeFile(layout) })) }, 'Wrote projects and system routes'); return 0;
+	}
+	if (command === 'watch') { return watchProject(root, subcommand); }
 	if (signature === 'project check') {
-		const issues = await projectIssues(fs, config);
+		const issues = (await Promise.all((values['all-targets'] ? layouts(workspaceConfig) : [config]).map(async layout => (await projectIssues(fs, layout)).map(issue => `${defaultProjectFile(layout)}: ${issue}`)))).flat();
 		emit({ issues }, format, issues.join('\n') || 'Project config, mounts, and generated tree are current.'); return issues.length ? 1 : 0;
 	}
-	const result = await checkProject(fs, config);
-	if (command === 'check') { emit(summary(result), format, diagnosticText(result)); return failed(result, !!values.strict) ? 1 : 0; }
+	if (command === 'check') {
+		const result = await checkTargets(fs, config, values.target);
+		emit(summary(result), format, diagnosticText(result)); return failed(result, !!values.strict) ? 1 : 0;
+	}
+	if ((config.projects || config.lint?.targets) && ['graph', 'explain'].includes(command) && !values.target) { throw new Error('Select a lint target with --target for ' + command + '.'); }
+	const selected = values.target ? lintTargets(config, values.target)[0][1] : config.systemRoots ? lintTargets(config)[0][1] : undefined;
+	const result = await checkProject(fs, config, undefined, selected);
 	if (command === 'graph') {
 		const graph = { nodes: [...result.index.modules.values()], edges: result.dependencies, diagnostics: result.diagnostics };
 		if (format === 'dot') {
@@ -190,10 +167,10 @@ export async function main(args: string[]): Promise<number> {
 	}
 	const tools = await Promise.all(['rokit', 'rojo', 'luau-lsp', 'selene', 'stylua', 'wally'].map(tool => toolVersion(tool, root)));
 	const issues = await projectIssues(fs, config);
+	if (config.projects || config.lint?.targets) { Object.assign(result, await checkTargets(fs, config)); }
 	const health = { ...summary(result), projectIssues: issues, tools };
-	const mandatoryMissing = tools.some(t => t.tool === 'rojo' && !t.available);
-	const failure = issues.length > 0 || mandatoryMissing || failed(result, !!values.strict);
-	const text = [diagnosticText(result), ...issues, ...(issues.length ? [] : ['Project mounts and generated tree are current.']), ...tools.map(t => `${t.tool}: ${t.available ? t.version : `unavailable${t.tool === 'rojo' ? ' (required for dev)' : ' (optional)'}`}`)].join('\n');
+	const failure = issues.length > 0 || failed(result, !!values.strict);
+	const text = [diagnosticText(result), ...issues, ...(issues.length ? [] : ['Project mounts and generated tree are current.']), ...tools.map(t => `${t.tool}: ${t.available ? t.version : 'unavailable (optional)'}`)].join('\n');
 	emit(health, format, text); return failure ? 1 : 0;
 }
 

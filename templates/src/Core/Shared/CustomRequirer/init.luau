@@ -1,12 +1,13 @@
 export type Require = typeof(require)
 export type ContextualImportGenerator = (Instance) -> Require
 export type RootResolver = (alias: string, pathSegments: { string }, context: Instance) -> (Instance?, number?)
-export type ServiceRoute = { Service: string, Name: string }
+export type ServiceRoute = { Service: string, Name: string, Root: string?, Systems: { [string]: boolean }? }
 
 export type Config = {
    Ancestors: { [string]: Instance },
    Aliases: { [string]: string }?,
    ServiceRoutes: { [string]: ServiceRoute }?,
+   SystemRoots: { [string]: { [string]: ServiceRoute } }?,
    RootResolver: RootResolver?,
    IgnorePredicate: ((Instance) -> boolean)?,
    Debug: boolean?,
@@ -23,6 +24,7 @@ function CustomRequirer.new(config: Config)
    local Ancestors = config.Ancestors
    local Aliases = config.Aliases or {}
    local ServiceRoutes = config.ServiceRoutes or {}
+   local SystemRoots = config.SystemRoots or {}
    local RootResolver = config.RootResolver
    local IgnorePredicate: (Instance) -> boolean = config.IgnorePredicate or function(_instance: Instance)
       return false
@@ -151,18 +153,48 @@ function CustomRequirer.new(config: Config)
 
       local current: Instance
       local firstSegment = 1
-      local route = if string.lower(alias) == "systems" then serviceRouteByLower[string.lower(segments[2] or "")] else nil
+      local route: ServiceRoute? = nil
+      local routeIndex = 2
+      local rootRoutes = SystemRoots[string.lower(alias)]
+      if rootRoutes or string.lower(alias) == "systems" then
+         local prefix = segments[1] or ""
+         for index = 2, #segments do
+            local candidate = (rootRoutes or serviceRouteByLower)[string.lower(segments[index])]
+            if candidate then
+               local matches = if candidate.Systems then candidate.Systems[prefix] == true else index == 2
+               if not matches and candidate.Systems and not CaseSensitive then
+                  for systemPath in candidate.Systems do
+                     if string.lower(systemPath) == string.lower(prefix) then
+                        matches = true
+                        break
+                     end
+                  end
+               end
+               if matches then
+                  route = candidate
+                  routeIndex = index
+                  break
+               end
+            end
+            prefix ..= "/" .. segments[index]
+         end
+      end
       if route then
-         local systems = systemRootsByService[route.Service]
+         local rootPath = route.Root or "Systems"
+         local cacheKey = route.Service .. "/" .. rootPath
+         local systems = systemRootsByService[cacheKey]
          if not systems then
             local service = game:GetService(route.Service)
-            systems = service:FindFirstChild("Systems")
+            systems = service
+            for _, segment in splitPath(rootPath) do
+               systems = if systems then systems:FindFirstChild(segment) else nil
+            end
          end
          if not systems then
-            error(("[CustomRequirer] Service '%s' has no Systems folder for route '%s'"):format(route.Service, segments[2]))
+            error(("[CustomRequirer] Service '%s' has no Systems folder for route '%s'"):format(route.Service, segments[routeIndex]))
          end
-         systemRootsByService[route.Service] = systems
-         segments[2] = route.Name
+         systemRootsByService[cacheKey] = systems
+         segments[routeIndex] = route.Name
          current = systems
       elseif RootResolver then
          local redirectedRoot, consumedSegments = RootResolver(alias, segments, context)

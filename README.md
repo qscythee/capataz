@@ -1,6 +1,49 @@
 # Capataz
 
-Capataz manages feature-owned `Systems` through a CLI and a companion VS Code extension. Each system keeps its `Client`, `Server`, and `Shared` code together under `src/Systems/<Name>System/`. The generated `default.project.json` mounts the client bootstrap, client and shared modules in `ReplicatedStorage`, and server modules in `ServerScriptService.Systems`. Route folder names are case-insensitive; service-named folders such as `ReplicatedFirst` can also be used, and custom folder-to-service mappings can be added in `capataz.config.json`. Both interfaces share project operations and import analysis.
+Capataz manages feature-owned `Systems` through a CLI and a companion VS Code extension. Each system keeps its `Client`, `Server`, and `Shared` code together under `src/Systems/<Name>System/`. The generated Rojo project (`default.project.json` by default) mounts the client bootstrap, client and shared modules in `ReplicatedStorage`, and server modules in `ServerScriptService.Systems`. Route folder names are case-insensitive; service-named folders such as `ReplicatedFirst` can also be used, and custom folder-to-service mappings can be added in `capataz.config.json`. Both interfaces share project operations and import analysis.
+
+## Nested systems (0.1.0)
+
+Systems can be grouped at any depth. A folder ending in the exact, case-sensitive suffix `System` identifies a system. An unsuffixed folder can opt in with `system.json` containing `{}`; this is the compatibility path for existing projects. All other folders are groups. New-system commands always append `System` to the final path segment.
+
+```text
+src/Systems/
+  Player/
+    CharacterControllerSystem/
+      Client/
+      Server/
+      Shared/
+      First/
+    Inventory/
+      system.json
+      Client/
+      Server/
+  Match/
+    RoundSystem/
+      Shared/
+```
+
+```sh
+capataz system new Player/CharacterController
+capataz system list
+capataz system remove Player/CharacterControllerSystem --dry-run
+```
+
+In VS Code, **New System** accepts the same slash-separated paths. Right-click the configured systems root or an empty/nested group to create relative to that folder; entering `Abilities/Dash` under `Player` creates `Player/Abilities/DashSystem`. **Delete System** appears on identified system folders, and its palette picker shows full paths. Context actions use the clicked workspace and respect custom `systemsDir` settings.
+
+Group names such as `Players`, `Teams`, and `First` are valid: routes are interpreted only immediately beneath an identified system. Configure `"systemRoutes": { "First": "ReplicatedFirst" }` alongside `project` to map `First`; a folder named `ReplicatedFirst` maps automatically. The group hierarchy is preserved under each service's `Systems` folder. Imports include the full path, for example `@Systems/Player/CharacterControllerSystem/First/Boot`.
+
+Discovery stops at the system's route folders. Module subfolders inside a route are ordinary content, even if their names end in `System`. Systems cannot contain another independently managed system or a group alongside their routes. Group names cannot end in `System`. Provider identities and lifecycle ordering are not namespaced by groups; keep provider names unique if your framework requires that.
+
+A redundant `system.json` in a suffixed system is allowed, but markers must be JSON files containing `{}`; no marker settings are supported. Invalid markers, unsupported system folders, and unrouted legacy source fail discovery before generated files are overwritten. CLI removal and the editor's delete command accept identified systems only, never groups. A legacy system's exact path takes precedence over the suffix shorthand.
+
+### Migrating from 0.0.x
+
+1. For each unsuffixed system, add `system.json` containing `{}`, or rename it with the `System` suffix and update its imports. No automatic renaming occurs.
+2. Before using nested imports, merge or replace `src/Core/Shared/CustomRequirer/init.luau` with the [0.1.0 template](templates/src/Core/Shared/CustomRequirer/init.luau). Keep your Import factory passing the generated `SystemRoutes` through `ServiceRoutes`. `init` preserves existing source and does not overwrite your importer.
+3. Run `capataz project generate`, `capataz project check`, and `capataz check`. Generation records explicit system paths in the route table so legacy names and route-named groups resolve consistently.
+
+Flat suffixed systems continue to work. The CLI and editor share discovery and validation; saved marker changes rebuild editor diagnostics. For the optional Luau runtime regression, set `LUNE_BIN` to a Lune executable before running `npm run test:unit`.
 
 ## CLI
 
@@ -22,15 +65,15 @@ node dist/cli.cjs init --root /path/to/game
 | `capataz system remove Inventory --dry-run` | Preview removal and regeneration. |
 | `capataz system remove Inventory --yes` | Permanently remove the system. Without `--yes`, a terminal requires the full system name for confirmation. |
 | `capataz system list` | List systems and their runtime parts. |
-| `capataz project generate` | Regenerate `default.project.json` and the runtime route table. |
+| `capataz project generate` | Regenerate the configured project file and runtime route table. |
 | `capataz project check` | Validate mounts and generated-project and route-table freshness without rewriting them. |
 | `capataz check --strict` | Check imports and boundaries; fail on errors and all warnings. |
 | `capataz explain src/Systems/InventorySystem/Client/InventoryController.luau` | Show reachable imports and dependency chains to violations. |
 | `capataz graph --format dot` | Export Graphviz DOT; the default format is JSON. |
-| `capataz doctor` | Check project health and external tool versions. Rojo is required for `dev`; other tools are optional. |
-| `capataz dev --port 34872` | Watch structure/config, regenerate, and run Rojo serve and sourcemap watch. Ctrl+C stops the watcher and both children. |
+| `capataz doctor` | Check project health and external tool versions. External tools are optional. |
+| `capataz watch [project-file]` | Watch sources and config, regenerate the configured project, and incrementally lint selected project trees. |
 
-All commands accept `--root <directory>` and `--help`. Report commands support `--format json`; `dev` uses text. Init, system new/remove, and project generate support `--dry-run`. JSON removal requires `--yes` or `--dry-run`. Exit codes are **0** success, **1** check failures, and **2** usage/config/tool failures. `check`, `explain`, and `doctor` accept `--strict`. Graph export succeeds even with unresolved edges; run `check` to enforce CI policy.
+All commands accept `--root <directory>` and `--help`. Report commands support `--format json`; `watch` uses text. Init, system new/remove, and project generate support `--dry-run`. JSON removal requires `--yes` or `--dry-run`. Exit codes are **0** success, **1** check failures, and **2** usage/config/tool failures. `check`, `explain`, and `doctor` accept `--strict`. Graph export succeeds even with unresolved edges; run `check` to enforce CI policy.
 
 Install and pin external tools in your project's `rokit.toml` as usual. Capataz does not install packages or replace Rojo, Luau LSP, Selene, or StyLua.
 
@@ -69,7 +112,7 @@ For a custom source folder name, add a `systemRoutes` mapping from that name to 
 }
 ```
 
-Then put the routed modules in `src/Systems/<Name>System/Bootstrap/`. Capataz mounts them at `ReplicatedFirst.Systems.<Name>System.Bootstrap`, routes `@Systems/<Name>System/Bootstrap/...` there at runtime, and includes the folder in CLI system listings and runtime-boundary analysis. `capataz project generate` regenerates both `default.project.json` and the generated route table at `src/Core/Shared/CustomRequirer/SystemRoutes.luau`; edit `systemRoutes` rather than that generated file.
+Then put the routed modules in `src/Systems/<Name>System/Bootstrap/`. Capataz mounts them at `ReplicatedFirst.Systems.<Name>System.Bootstrap`, routes `@Systems/<Name>System/Bootstrap/...` there at runtime, and includes the folder in CLI system listings and runtime-boundary analysis. `capataz project generate` regenerates both the configured project file and the generated route table at `src/Core/Shared/CustomRequirer/SystemRoutes.luau`; edit `systemRoutes` rather than that generated file.
 
 `CustomRequirer` resolves route aliases to cached service `Systems` roots. Its optional case-insensitive child lookup also indexes children per parent instead of scanning them on every miss; exact-case mode stays on Roblox's direct `FindFirstChild` path. Module execution caching remains Roblox's built-in `require` behavior.
 
@@ -137,7 +180,7 @@ Live checks debounce edits by 250 ms and cache each workspace's module index and
 
 Startup, explicit checks, source creation/deletion/renames, and changes to metadata, `.luaurc`, Capataz config, or Rojo project files rebuild the index and recheck the workspace, including unresolved imports. Removing the opt-in config clears the workspace's lint diagnostics. Factory/module export summaries are cached per client/server runtime. Changes to imported sources invalidate their transitive callers; unrelated edits retain the cached index and summaries. CLI checks still scan the full project. Individual file analysis remains synchronous, so exceptionally large or complex files can still occupy the extension host while being analyzed.
 
-The checker tokenizes Luau and tracks scoped bindings. It recognizes `src/Core/Shared/CustomRequirer/init.luau` as the CustomRequirer implementation and follows factory exports through imported modules, regardless of local variable names or factory location:
+The checker tokenizes Luau and tracks scoped bindings. It recognizes the module mounted at `ReplicatedStorage.Core.Shared.CustomRequirer` as the CustomRequirer implementation and follows factory exports through imported modules, regardless of local variable names or factory location:
 
 ```luau
 local factory = require(game:GetService("ReplicatedStorage").Import)
@@ -148,7 +191,7 @@ local data = copiedImport("@Systems/InventorySystem/Shared/Data")
 
 It also recognizes reassigned `require = factory(script)`, chained `require(...Import)(script)`, and `CustomRequirer.new` with literal `Ancestors`. It follows constants, concatenation, conditional alternatives, table fields, Instance paths, `GetService`, `WaitForChild`, and `FindFirstChild`. Comments and example strings are ignored; locals and parameters can shadow `require`.
 
-Custom relative imports resolve through the generated **Roblox instance tree**, including `init.luau` parent behavior. Native string imports use `.luaurc` aliases; custom imports use runtime Import routing. Script/LocalScript targets are errors.
+Custom relative imports resolve through the selected **Roblox instance tree**, including `init.luau` parent behavior. Native string imports use `.luaurc` aliases; custom imports use runtime Import routing. Script/LocalScript targets are errors.
 
 This is a conservative import analyzer, not a complete Luau type checker or interpreter. Runtime-computed targets, arbitrary `RootResolver` callbacks, interpolated strings, numeric asset requires, higher-order wrappers, and runtime-created instances cannot always be resolved. Recognized dynamic requires warn; `--strict` makes warnings fail CI. Function bodies are inspected without execution, and boundary rules apply inside `RunService` guards too. Cross-file wrapper/factory inference is not supported. Use Luau LSP alongside Capataz for syntax/type analysis.
 
@@ -193,7 +236,7 @@ This bundles the CLI and templates into a Node single-executable application at 
 
 `npm run test:unit` builds the CLI and runs import-analysis, instance-resolution, and command integration tests. `npm test` builds and runs VS Code integration tests, including unsaved-document diagnostics. Tests use disposable directories and the ignored `out/editor-fixture` workspace.
 
-To check `dev` against a real installed Rojo executable, run `npm run compile-tests`, `npm run build:cli`, then `node scripts/test-dev.mjs /path/to/rojo`. The test starts Rojo on port 34991 in a temporary project, verifies sourcemap generation and regeneration after adding a system, and checks signal shutdown.
+To check the standalone watcher, run `npm run compile-tests`, `npm run build:cli`, then `node scripts/test-watch.mjs`. The test uses an empty PATH and verifies authored-project preservation, lint recovery, generation, shutdown, and managed multi-place watch with shared-source diagnostics.
 
 ## Start a project
 
@@ -209,7 +252,7 @@ Other commands:
 
 - **Capataz: New System** creates `Client`, `Server`, and `Shared` directories and regenerates the Rojo project.
 - **Capataz: Delete System** removes a selected system after confirmation and regenerates the Rojo project.
-- **Capataz: Regenerate Project** rebuilds `default.project.json` and the runtime route table from the config and current `src/Systems` folders.
+- **Capataz: Regenerate Project** rebuilds the configured project file and the runtime route table from the config and current `src/Systems` folders.
 - **Capataz: Check Runtime Boundaries** refreshes import diagnostics.
 
 For a module to use the import aliases at runtime:
@@ -232,3 +275,207 @@ The Development Host's integrated terminal exposes the current CLI build as `cap
 After code changes, reload the Development Host window to use the new build during the same session. To start over, stop debugging and press F5 again. Copy anything you want to keep outside the disposable workspace before stopping. If a host from the old launcher is still open, close it once before using the new launcher.
 
 To verify the build directly, run `npm.cmd run compile` on Windows or `npm run compile` elsewhere. Integration tests run with `npm.cmd test` or `npm test`. The test runner uses the standard local VS Code installation on Windows when available. For another installation, set `VSCODE_EXECUTABLE_PATH` to its executable.
+
+## Project files and multiple places
+
+Set `"projectFile": "places/game.project.json"` at the top level of `capataz.config.json`, alongside `project`, `systemRoutes`, and `lint`. It defaults to `default.project.json`.
+
+Init, generation, project checks, system mutations, and VS Code regeneration use this filename. Paths are relative to the workspace root and must stay inside it. Configured `$path` mounts remain workspace-relative; generated mounts are rebased if the output is in a subdirectory. A non-default output gets a filename-derived project name unless `project.name` is set. Changing the setting does not delete the previous file.
+
+```sh
+capataz watch                            # Generate and lint configured targets
+capataz watch places/lobby.project.json  # Preserve and lint this project
+```
+
+An alternate that is not registered under `projects` must exist and is never overwritten by watch. Capataz regenerates its configured output, or all registered project layouts, and their route metadata. Watch runs entirely within Capataz: run Rojo and sourcemap tooling separately. The old `dev` command and `--port` option have been removed.
+
+Single-project configurations retain one generated tree. Register `projects` to generate independent place trees from one workspace; `project check --all-targets` verifies them all. Lint can also analyze independently authored project trees using named targets.
+
+Configure targets under the top-level `lint` setting:
+
+```json
+{
+  "lint": {
+    "targets": {
+      "lobby": { "projectFile": "places/lobby.project.json" },
+      "match": {
+        "projectFile": "places/match.project.json",
+        "includeGlobs": ["src/Shared/**", "src/Match/**"]
+      }
+    }
+  }
+}
+```
+
+Each target automatically indexes the files mounted in its project tree, including nested project mounts. Project `$path` values resolve relative to their containing project file. Files do not need to live under `src`. Optional `includeGlobs` are workspace-relative and restrict which files report diagnostics; other mounted dependencies remain available for import analysis. Omit the filter to check every mounted module. Existing `ignoreGlobs` exclusions still apply.
+
+`capataz check` checks all configured targets; `check --all-targets` makes that explicit, and `check --target lobby` selects one. `explain` and `graph` require `--target <name>` when named targets exist. VS Code checks all configured targets with separate incremental caches and labels diagnostics by target, so a shared file can be valid in one place and invalid in another.
+
+Without targets, ordinary checks retain the generated-tree behavior. An explicit `watch` selection uses matching configured target filters, or automatically analyzes that project's mounted files if it is not registered. Watch without an argument checks all configured targets. Source edits update affected importers; structural, project, and configuration changes rebuild indexes. Restart watch to change its explicit project selection.
+
+Target projects must stay within the workspace. Cyclic project mounts and mounting the same source file at multiple instance paths within one target produce configuration errors.
+
+### Choosing an output for one command
+
+Commands that generate a project accept an optional `--project-file <path>` override. The path is workspace-relative and must end in `.project.json`:
+
+```sh
+capataz system new Player/PlayerController --project-file places/lobby.project.json
+capataz system remove Player/PlayerController --project-file places/lobby.project.json
+capataz project generate --project-file places/lobby.project.json
+capataz project check --project-file places/lobby.project.json
+capataz init --project-file places/lobby.project.json
+```
+
+This selects the output for that invocation without changing an existing configured default. Generation replaces the selected file with the tree described by Capataz configuration, with mounts rebased for its directory. Use `--dry-run` on writing commands to preview changes. Without named project layouts, commands use the single configured Systems root. With layouts, a matching project selection also selects its source root and isolated route metadata. Removing a system deletes its source, affecting any authored project that also mounts that source. Other project outputs are not regenerated by that command.
+
+When initializing a workspace without Capataz configuration, the selected existing project is adopted, or a new project is created at that path; that selection becomes the initial configured default. Existing configurations keep their default during later init calls.
+
+VS Code Init, New System, Delete System, and Generate Project show an output picker when multiple project files exist or the configured default is missing. The picker includes the option to create the configured default. Cancelling leaves the operation unchanged. With a single existing configured project, commands use it directly. Picker selection applies only to the current operation, except when establishing the initial configuration during Init.
+
+`watch [project-file]` preserves unregistered authored projects and regenerates registered layouts (or the configured default). `--target` selects a named layout for project/system commands and a named target for lint commands. `--project-file` also resolves a matching layout.
+
+### Managed multi-place layouts
+
+Add `projects` alongside the existing `project` configuration. Common Rojo settings and tree entries come from `project`; each layout supplies its own Systems root and may override `name`, `systemRoutes`, `coreDir`, or `tree`. All configuration paths are relative to the workspace root.
+
+```json
+{
+  "projectFile": "places/lobby.project.json",
+  "projects": {
+    "lobby": {
+      "projectFile": "places/lobby.project.json",
+      "systemsDir": "places/lobby/src/Systems",
+      "coreDir": "shared/Core"
+    },
+    "match": {
+      "projectFile": "places/match.project.json",
+      "systemsDir": "places/match/src/Systems",
+      "coreDir": "shared/Core"
+    }
+  }
+}
+```
+
+This example shows additions to an existing configuration; retain its `project` object. The default `projectFile` must match a registered layout. In the `systemsDir` convenience model, Systems roots must be distinct and non-overlapping. For shared system ownership, use the explicit `systemRoots` model below. Both places can contain `PlayerSystem`, and selecting one place for creation/deletion affects only that place's Systems root. Shared code stays outside these roots and is mounted through each project's tree.
+
+`coreDir` maps Client/Shared/Server/First into their corresponding Core service folders. Explicit per-layout tree mounts can refine those paths. A tree override containing `$path` replaces the inherited node, avoiding stale inherited mounts. Init uses the selected mappings when scaffolding and preserves existing source files. Each place mounts its own `ReplicatedStorage.CapatazSystemRoutes` from `.capataz/generated/<project-file>/SystemRoutes.luau`; the CustomRequirer source stays shared. Init points newly scaffolded Import factories at that table. When migrating existing Import factories to managed layouts, change their generated-route require to `require(ReplicatedStorage.CapatazSystemRoutes)`; existing source files are preserved.
+
+```sh
+capataz init --target lobby
+capataz init --target match
+capataz system new Player --target lobby
+capataz system new Player --target match
+capataz system list --target match
+capataz system remove Player --target match
+capataz project generate --all-targets
+capataz project check --all-targets
+capataz check --target lobby
+capataz watch
+```
+
+Each registered layout automatically becomes a lint target. Optional `lint.targets` entries with the same name and project file add reporting filters; other entries can describe authored projects that Capataz must not generate. Watch regenerates registered layouts on structural/config changes and incrementally checks sources on edits. Running Rojo remains your choice.
+
+Explorer actions infer the place from the clicked Systems root, group, or system. Palette actions present the registered layouts, including outputs that have not been generated yet. Selection and cancellation happen before source changes. Existing single-project configurations and positional watch selection remain supported.
+
+### Explicit reusable source roots and fully mapped projects
+
+Use this model when a directory such as `Universal` contains code and systems consumed by several places. `systemRoots` identifies directories Capataz manages; each project's `systemMounts` describes where the roots' route folders appear in Roblox. All other source, including any directory called `Core`, uses ordinary `tree` mounts and has no special meaning in this mode.
+
+A complete configuration with shared and place-owned roots:
+
+```json
+{
+  "projectFile": "Places/Lobby.project.json",
+  "systemRoots": {
+    "universal": "Universal/Systems",
+    "lobby": "Places/Lobby/Systems",
+    "match": "Places/Match/Systems"
+  },
+  "project": {
+    "emitLegacyScripts": false,
+    "tree": {
+      "$className": "DataModel",
+      "ReplicatedStorage": {
+        "$className": "ReplicatedStorage",
+        "Universal": {
+          "$className": "Folder",
+          "Core": { "$path": "Universal/Core" }
+        }
+      }
+    }
+  },
+  "projects": {
+    "lobby": {
+      "projectFile": "Places/Lobby.project.json",
+      "systemMounts": {
+        "universal": {
+          "Client": "ReplicatedStorage/Universal/Systems",
+          "Shared": "ReplicatedStorage/Universal/Systems",
+          "Server": "ServerScriptService/Universal/Systems"
+        },
+        "lobby": {
+          "Client": "ReplicatedStorage/Local/Systems",
+          "Shared": "ReplicatedStorage/Local/Systems",
+          "Server": "ServerScriptService/Local/Systems"
+        }
+      }
+    },
+    "match": {
+      "projectFile": "Places/Match.project.json",
+      "tree": {
+        "ReplicatedStorage": {
+          "Local": {
+            "$className": "Folder",
+            "Core": { "$path": "Places/Match/Core" }
+          }
+        }
+      },
+      "systemMounts": {
+        "universal": {
+          "Client": "ReplicatedStorage/Universal/Systems",
+          "Shared": "ReplicatedStorage/Universal/Systems",
+          "Server": "ServerScriptService/Universal/Systems"
+        },
+        "match": {
+          "Client": "ReplicatedStorage/Local/Systems",
+          "Shared": "ReplicatedStorage/Local/Systems",
+          "Server": "ServerScriptService/Local/Systems"
+        }
+      }
+    }
+  }
+}
+```
+
+A mapped root retains `<system path>/<route folder>` below each destination. For example, `Universal/Systems/PlayerSystem/Shared/State.luau` becomes `ReplicatedStorage.Universal.Systems.PlayerSystem.Shared.State`. Root labels, source locations, route folder names, and destinations are explicit. Source roots cannot overlap; share one named root across projects instead of declaring the same directory twice. Destination collisions are errors, and new-system collisions are checked before source is written. Managed destinations cannot sit beneath a filesystem `$path` mount: split the parent into explicit sibling mounts so Rojo does not create duplicate children.
+
+```sh
+capataz init --target lobby
+capataz init --target match
+capataz system new Player --target lobby --systems-root universal
+capataz system new Player --target lobby --systems-root lobby
+capataz system new Player --target match --systems-root match
+capataz system list --target match --systems-root universal
+capataz system remove Player --target lobby --systems-root universal
+```
+
+Init in this mode creates the selected project's managed root directories and generated outputs. It does not invent Core directories, framework scripts, examples, or native aliases. Developers own the ordinary code and bootstrap mappings. Existing single-root scaffolding remains available through the earlier configuration model.
+
+Creating or deleting a shared system regenerates **every registered consuming project**, even when the command was launched from one place. Deletion removes the shared source itself; it is not an unmount operation. Local systems with the same name remain independent. Explorer actions infer the root from the clicked folder; shared roots do not require an arbitrary place choice, and deletion confirmation lists affected projects. Palette actions select the project and then the root when necessary.
+
+If using Capataz's CustomRequirer, update that module from the current template and pass generated routes as `SystemRoots`. This resolves named aliases such as `@universal/PlayerSystem/Shared/State` and `@lobby/PlayerSystem/Server/State` using each project's mounts:
+
+```lua
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local CustomRequirer = require(ReplicatedStorage.Universal.Core.CustomRequirer)
+return CustomRequirer.new({
+    Ancestors = {},
+    SystemRoots = require(ReplicatedStorage.CapatazSystemRoutes),
+    CaseSensitive = true,
+})
+```
+
+For a relocated CustomRequirer implementation, declare its workspace-relative module filename in `lint.requirerModules`, for example `["Universal/Core/CustomRequirer/init.luau"]`. This explicitly identifies the supported implementation; Capataz does not assume arbitrary modules named CustomRequirer have that behavior. Other import factories retain the existing inference and `lint.importFactories` mechanisms. Native aliases remain controlled by the authored `.luaurc`.
+
+Generated route metadata defaults to `ReplicatedStorage.CapatazSystemRoutes`. A project's `routeModule` can select another service-rooted path, or `false` to leave metadata unmounted when using a different runtime importer. The table remains generated under `.capataz/generated/<project-file>/`. No framework source is overwritten automatically during migration.

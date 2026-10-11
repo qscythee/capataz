@@ -2,10 +2,10 @@ import * as vscode from 'vscode';
 import { CONFIG_FILE_NAME } from './config';
 import { editorFs } from './editorFs';
 import { Diagnostic } from './lint/analyze';
-import { IncrementalLinter } from './lint/incremental';
+import { TargetLinter } from './lint/targets';
 
 interface Pending { rebuild: boolean; full: boolean; files: Set<string> }
-interface WorkspaceLint { folder: vscode.WorkspaceFolder; linter: IncrementalLinter; pending?: Pending }
+interface WorkspaceLint { folder: vscode.WorkspaceFolder; linter: TargetLinter; pending?: Pending }
 const pending = (): Pending => ({ rebuild: false, full: false, files: new Set() });
 const lintOnChange = (uri: vscode.Uri): boolean => vscode.workspace.getConfiguration('capataz', uri).get<string>('lint.run', 'onChange') !== 'onSave';
 
@@ -89,12 +89,12 @@ export function registerDiagnostics(context: vscode.ExtensionContext, output: vs
 		}
 		for (const folder of folders) {
 			if (!workspaces.has(folder.uri.toString())) {
-				workspaces.set(folder.uri.toString(), { folder, linter: new IncrementalLinter(editorFs(folder.uri)), pending: { ...pending(), rebuild: true } });
+				workspaces.set(folder.uri.toString(), { folder, linter: new TargetLinter(editorFs(folder.uri)), pending: { ...pending(), rebuild: true } });
 			}
 		}
 		schedule();
 	};
-	const watcher = vscode.workspace.createFileSystemWatcher('**/{*.luau,*.lua,*.meta.json,.luaurc,capataz.config.json,*.project.json}');
+	const watcher = vscode.workspace.createFileSystemWatcher('**/{*.luau,*.lua,*.meta.json,system.json,.luaurc,capataz.config.json,*.project.json}');
 	context.subscriptions.push(collection, watcher,
 		watcher.onDidCreate(uri => enqueue(uri, true)), watcher.onDidChange(uri => enqueue(uri)), watcher.onDidDelete(uri => enqueue(uri, true)),
 		vscode.workspace.onDidChangeTextDocument(event => { if (/\.lua[u]?$/.test(event.document.uri.path) && lintOnChange(event.document.uri)) { enqueue(event.document.uri); } }),

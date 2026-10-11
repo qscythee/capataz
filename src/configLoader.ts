@@ -21,8 +21,15 @@ export function getWorkspaceRoot(): vscode.Uri | undefined {
  * capataz.config.json. Its mere presence is the opt-in signal. Shows a
  * recoverable error with a shortcut to `capataz.init` when it's missing.
  */
-export async function ensureCapatazConfig(): Promise<{ root: vscode.Uri; config: CapatazConfig } | undefined> {
-	const root = getWorkspaceRoot();
+export async function ensureCapatazConfig(target?: vscode.Uri): Promise<{ root: vscode.Uri; config: CapatazConfig } | undefined> {
+	const active = vscode.window.activeTextEditor?.document.uri;
+	let root = target ? vscode.workspace.getWorkspaceFolder(target)?.uri : active ? vscode.workspace.getWorkspaceFolder(active)?.uri : undefined;
+	if (!target && !root) {
+		root = (vscode.workspace.workspaceFolders?.length ?? 0) > 1
+			? (await vscode.window.showWorkspaceFolderPick({ placeHolder: 'Select the Capataz project' }))?.uri
+			: getWorkspaceRoot();
+		if (!root && vscode.workspace.workspaceFolders?.length) { return undefined; }
+	}
 	if (!root) {
 		vscode.window.showErrorMessage('Capataz: open a folder/workspace first.');
 		return undefined;
@@ -37,7 +44,7 @@ export async function ensureCapatazConfig(): Promise<{ root: vscode.Uri; config:
 			'Run Capataz: Init',
 		);
 		if (choice) {
-			await vscode.commands.executeCommand('capataz.init');
+			await vscode.commands.executeCommand('capataz.init', root);
 		}
 		return undefined;
 	}

@@ -40,6 +40,7 @@ async function fixture(t: TestContext) {
 	const root = await fs.mkdtemp(path.join(os.tmpdir(), 'capataz-factories-'));
 	t.after(() => fs.rm(root, { recursive: true, force: true }));
 	const project = nodeFs(root), config = structuredClone(starterConfig);
+	await project.write('src/Systems/Example/system.json', '{}');
 	const rs = config.tree.ReplicatedStorage as CapatazTreeNode;
 	rs.Tools = { $path: 'lib' }; rs.Packages = { $path: 'deps/shared' };
 	config.tree.ServerStorage = { ServerPackages: { $path: 'deps/server' } };

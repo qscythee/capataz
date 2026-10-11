@@ -1,4 +1,4 @@
-import { CapatazConfig } from '../config';
+import { CapatazConfig, LintTarget } from '../config';
 import { ProjectFs } from '../core/fs';
 import { Analysis } from './analyze';
 import { AnalysisSession } from './session';
@@ -6,13 +6,14 @@ import { createIndex, ProjectIndex } from './index';
 import { createLintIgnore } from './ignore';
 
 export interface CheckResult extends Analysis { files: number; index: ProjectIndex }
-export async function checkProject(fs: ProjectFs, config: CapatazConfig, overlays = new Map<string, string>()): Promise<CheckResult> {
-	const index = await createIndex(fs, config);
+export async function checkProject(fs: ProjectFs, config: CapatazConfig, overlays = new Map<string, string>(), target?: LintTarget): Promise<CheckResult> {
+	const index = await createIndex(fs, config, target);
 	const result: CheckResult = { diagnostics: [], dependencies: [], files: 0, index };
 	const session = new AnalysisSession(index);
 	const ignored = createLintIgnore(config.lint?.ignoreGlobs);
+	const included = target?.includeGlobs ? createLintIgnore(target.includeGlobs) : () => true;
 	for (const info of index.modules.values()) {
-		if (ignored(info.file)) { continue; }
+		if (ignored(info.file) || !included(info.file)) { continue; }
 		result.files++;
 		const analysis = await session.analyze(fs, info, overlays, new AbortController().signal);
 		result.diagnostics.push(...analysis.diagnostics); result.dependencies.push(...analysis.dependencies);

@@ -1,4 +1,4 @@
-import { CONFIG_FILE_NAME } from '../config';
+import { CONFIG_FILE_NAME, LintTarget } from '../config';
 import { ProjectFs } from '../core/fs';
 import { readConfig } from '../core/project';
 import { Analysis } from './analyze';
@@ -16,7 +16,9 @@ export class IncrementalLinter {
 	private unindexed = new Set<string>();
 	private rebuildNeeded = true;
 	private ignoreGlobs: readonly string[] = [];
-	constructor(private fs: ProjectFs) {}
+	constructor(private fs: ProjectFs, private target?: LintTarget) {}
+
+	hasFile(file: string): boolean { return this.index?.modules.has(file) ?? false; }
 
 	async refresh(request: LintRequest, overlays: Pick<ReadonlyMap<string, string>, 'get'> = new Map(), signal = new AbortController().signal): Promise<Map<string, Analysis>> {
 		signal.throwIfAborted();
@@ -38,12 +40,13 @@ export class IncrementalLinter {
 				const cleared = new Map([...this.cache.keys()].map(file => [file, { diagnostics: [], dependencies: [] } as Analysis]));
 				this.index = undefined; this.session = undefined; this.cache.clear(); this.unindexed.clear(); this.rebuildNeeded = true; return cleared;
 			}
-			index = await createIndex(fs, await readConfig(fs));
+			index = await createIndex(fs, await readConfig(fs), this.target);
 		}
 		if (!index) { throw new Error('Project index is unavailable.'); }
 		const ignoreGlobs = request.ignoreGlobs ?? this.ignoreGlobs;
 		const ignoresChanged = ignoreGlobs.length !== this.ignoreGlobs.length || ignoreGlobs.some((glob, i) => glob !== this.ignoreGlobs[i]);
 		const ignored = createLintIgnore([...(index.config.lint?.ignoreGlobs ?? []), ...ignoreGlobs]);
+		const included = this.target?.includeGlobs ? createLintIgnore(this.target.includeGlobs) : () => true;
 		const full = rebuild || request.full || ignoresChanged;
 		const session = rebuild || ignoresChanged || !this.session ? new AnalysisSession(index, ignoreGlobs) : this.session.fork();
 		const changed = new Map<string, string>();
@@ -61,7 +64,7 @@ export class IncrementalLinter {
 		for (const file of full ? index.modules.keys() : affected) {
 			signal.throwIfAborted();
 			const info = index.modules.get(file);
-			if (!info || ignored(file)) { continue; }
+			if (!info || ignored(file) || !included(file)) { continue; }
 			const source = changed.get(file) ?? overlays.get(file) ?? (!full ? this.cache.get(file) : undefined) ?? await fs.read(file);
 			const analysis = await session.analyze(fs, info, { get: p => p === file ? source : overlays.get(p) }, signal);
 			staged.set(file, source); updates.set(file, analysis);

@@ -1,7 +1,8 @@
+import { selectLayout } from '../core/layout';
 import * as path from 'node:path';
-import { CapatazConfig, CapatazTreeNode, defaultSystemsDir } from '../config';
+import { CapatazConfig, CapatazTreeNode, LintTarget, defaultSystemsDir } from '../config';
 import { ProjectFs, walk } from '../core/fs';
-import { buildProject, resolveSystemRoute } from '../core/project';
+import { buildProject, discoverSystems, resolveSystemRoute } from '../core/project';
 
 export type Side = 'Client' | 'Server' | 'Shared';
 export interface ModuleInfo { file: string; instance: string; side?: Side; module: boolean }
@@ -15,11 +16,31 @@ export interface ProjectIndex {
 const slash = (value: string) => value.replace(/\\/g, '/');
 export const normalize = (value: string) => path.posix.normalize(slash(value)).replace(/^\.\//, '');
 
-export function sourceSide(file: string, config: CapatazConfig, instance = ''): Side | undefined {
+export function sourceSide(file: string, config: CapatazConfig, instance = '', systemPaths?: Set<string>): Side | undefined {
 	if (/\.client\.lua[u]?$/.test(file)) { return 'Client'; }
 	if (/\.server\.lua[u]?$/.test(file)) { return 'Server'; }
+	if (config.systemRoots) {
+		for (const [rootName, mounts] of Object.entries(config.systemMounts ?? {})) {
+			const directory = config.systemRoots[rootName];
+			if (!file.startsWith(directory + '/')) { continue; }
+			const parts = file.slice(directory.length + 1).split('/');
+			for (const [folder, destination] of Object.entries(mounts)) {
+				for (let i = 1; i < parts.length - 1; i++) {
+					const prefix = destination + '/' + parts.slice(0, i).join('/') + '/' + folder;
+					if (parts[i].toLowerCase() !== folder.toLowerCase() || !(instance === prefix || instance.startsWith(prefix + '/'))) { continue; }
+					if (folder.toLowerCase() === 'client') { return 'Client'; }
+					if (folder.toLowerCase() === 'server') { return 'Server'; }
+					if (folder.toLowerCase() === 'shared') { return 'Shared'; }
+				}
+			}
+		}
+		const service = instance.split('/')[0];
+		return ['ServerScriptService', 'ServerStorage'].includes(service) ? 'Server' : ['ReplicatedFirst', 'StarterPlayer', 'StarterGui', 'StarterPack'].includes(service) ? 'Client' : service === 'ReplicatedStorage' ? 'Shared' : undefined;
+	}
 	const systems = defaultSystemsDir(config).replace(/\/$/, '');
-	const relative = file.startsWith(systems + '/') ? file.slice(systems.length + 1).split('/')[1] : undefined;
+	const segments = file.startsWith(systems + '/') ? file.slice(systems.length + 1).split('/') : [];
+	const boundary = segments.findIndex((part, i) => systemPaths ? systemPaths.has(segments.slice(0, i + 1).join('/')) : part.endsWith('System'));
+	const relative = boundary >= 0 ? segments[boundary + 1] : undefined;
 	if (relative) {
 		const route = resolveSystemRoute(config, relative);
 		if (route) {
@@ -41,19 +62,29 @@ export function sourceSide(file: string, config: CapatazConfig, instance = ''): 
 	return undefined;
 }
 
-export async function createIndex(fs: ProjectFs, config: CapatazConfig): Promise<ProjectIndex> {
+export async function createIndex(fs: ProjectFs, config: CapatazConfig, target?: LintTarget): Promise<ProjectIndex> {
+	config = selectLayout(config, target?.projectFile);
+	const systems = target ? [] : await discoverSystems(fs, config);
+	const systemPaths = new Set(systems.map(system => system.name));
 	const index: ProjectIndex = { modules: new Map(), instances: new Map(), aliases: {}, config };
 	if (await fs.exists('.luaurc')) {
 		const luaurc = JSON.parse(await fs.read('.luaurc'));
 		index.aliases = luaurc.aliases ?? {};
 	}
-	const add = (file: string, instance: string, className?: string) => {
+	const add = (file: string, instance: string, className?: string, inheritedSide?: Side) => {
 		if (!/\.lua[u]?$/.test(file)) { return; }
 		const module = className ? className === 'ModuleScript' : !/\.(client|server)\.lua[u]?$/.test(file);
-		const info = { file, instance, side: sourceSide(file, config, instance), module };
+		const side = target
+			? inheritedSide ?? (config.systemRoots ? sourceSide(file, config, instance) : undefined) ?? (/\.client\.lua[u]?$/.test(file) ? 'Client' : /\.server\.lua[u]?$/.test(file) ? 'Server' : /^(ServerScriptService|ServerStorage)(\/|$)/.test(instance) ? 'Server' : /^(ReplicatedFirst|StarterPlayer|StarterGui|StarterPack)(\/|$)/.test(instance) ? 'Client' : /^ReplicatedStorage\/(Core\/Client\/|Systems\/.+\/Client\/)/.test(instance) ? 'Client' : /^ReplicatedStorage(\/|$)/.test(instance) ? 'Shared' : undefined)
+			: sourceSide(file, config, instance, systemPaths);
+		if (target && index.modules.has(file) && index.modules.get(file)!.instance !== instance) { throw new Error('Source mounted more than once in ' + target.projectFile + ': ' + file); }
+		const info = { file, instance, side, module };
 		index.modules.set(file, info); index.instances.set(instance, info);
 	};
-	const mount = async (node: CapatazTreeNode, instance: string) => {
+	const mount = async (node: CapatazTreeNode, instance: string, inheritedSide?: Side) => {
+		const properties = node.$properties as { RunContext?: string } | undefined;
+		const side = properties?.RunContext === 'Client' ? 'Client' : properties?.RunContext === 'Server' ? 'Server' : inheritedSide;
+		if (target && node.$path && !(await fs.exists(node.$path))) { throw new Error('Missing mount in ' + target.projectFile + ': ' + node.$path); }
 		if (node.$path && await fs.exists(node.$path)) {
 			const files = await walkMount(fs, node.$path);
 			for (const file of files) {
@@ -64,18 +95,18 @@ export async function createIndex(fs: ProjectFs, config: CapatazConfig): Promise
 				let className = relative ? undefined : node.$className;
 				const metadata = file.replace(/\.(client|server)\.lua[u]?$|\.lua[u]?$/, '.meta.json');
 				if (await fs.exists(metadata)) { className = JSON.parse(await fs.read(metadata)).className ?? className; }
-				add(file, suffix ? `${instance}/${suffix}` : instance, className);
+				add(file, suffix ? `${instance}/${suffix}` : instance, className, side);
 			}
 		}
 		for (const [name, child] of Object.entries(node)) {
-			if (!name.startsWith('$') && child && typeof child === 'object') { await mount(child, instance ? `${instance}/${name}` : name); }
+			if (!name.startsWith('$') && child && typeof child === 'object') { await mount(child, instance ? `${instance}/${name}` : name, side); }
 		}
 	};
-	await mount((await buildProject(fs, config)).tree as CapatazTreeNode, '');
+	await mount(target ? await readTargetTree(fs, target.projectFile) : (await buildProject(fs, config, systems)).tree as CapatazTreeNode, '');
 	// Unmounted source still gets checked, but has no invented runtime location.
-	for (const directory of new Set(['src', defaultSystemsDir(config)])) {
+	for (const directory of target ? [] : new Set(['src', defaultSystemsDir(config)])) {
 		for (const file of await walk(fs, directory)) {
-			if (/\.lua[u]?$/.test(file) && !index.modules.has(file)) { index.modules.set(file, { file, instance: '', side: sourceSide(file, config), module: !/\.(client|server)\.lua[u]?$/.test(file) }); }
+			if (/\.lua[u]?$/.test(file) && !index.modules.has(file)) { index.modules.set(file, { file, instance: '', side: sourceSide(file, config, '', systemPaths), module: !/\.(client|server)\.lua[u]?$/.test(file) }); }
 		}
 	}
 	return index;
@@ -121,4 +152,28 @@ export function resolveNative(index: ProjectIndex, caller: ModuleInfo, specifier
 	// Roblox relative imports follow the mounted DataModel, including init modules.
 	if (caller.instance) { return index.instances.get(normalize(`${path.posix.dirname(caller.instance)}/${specifier}`)); }
 	return resolveSource(index, `${path.posix.dirname(caller.file)}/${specifier}`);
+}
+
+async function readTargetTree(fs: ProjectFs, file: string, ancestors = new Set<string>()): Promise<CapatazTreeNode> {
+	if (ancestors.has(file)) { throw new Error(`Cyclic project mount: ${file}`); }
+	const visited = new Set(ancestors).add(file);
+	const project = JSON.parse(await fs.read(file));
+	if (!project?.tree || typeof project.tree !== 'object' || Array.isArray(project.tree)) { throw new Error(`Lint project '${file}' must define a tree.`); }
+	const rebase = async (node: CapatazTreeNode) => {
+		for (const [key, child] of Object.entries(node)) { if (!key.startsWith('$') && child && typeof child === 'object') { await rebase(child); } }
+		if (node.$path) {
+			if (path.posix.isAbsolute(node.$path) || /^[A-Za-z]:/.test(node.$path)) { throw new Error(`Lint mount must be workspace-relative: ${node.$path}`); }
+			node.$path = normalize(path.posix.join(path.posix.dirname(file), node.$path.replace(/\\/g, '/')));
+			if (node.$path === '..' || node.$path.startsWith('../')) { throw new Error(`Lint mount escapes the workspace: ${node.$path}`); }
+			let nested = node.$path.endsWith('.project.json') ? node.$path : undefined;
+			if (!nested && !/\.[^/]+$/.test(node.$path) && await fs.exists(node.$path + '/default.project.json')) { nested = node.$path + '/default.project.json'; }
+			if (nested) {
+				const child = await readTargetTree(fs, nested, visited);
+				delete node.$path;
+				Object.assign(node, { ...child, ...node });
+			}
+		}
+	};
+	await rebase(project.tree);
+	return project.tree;
 }

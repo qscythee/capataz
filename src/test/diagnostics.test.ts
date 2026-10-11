@@ -1,3 +1,5 @@
+import { editorFs } from '../editorFs';
+import { generate, readConfig } from '../core/project';
 import * as assert from 'assert';
 import * as vscode from 'vscode';
 import * as path from 'node:path';
@@ -157,6 +159,80 @@ suite('Capataz editor boundary diagnostics', () => {
 			await replace(Buffer.from(original).toString('utf8')); await document.save();
 			await configuration.update('lint.run', previous, vscode.ConfigurationTarget.WorkspaceFolder);
 			await vscode.workspace.fs.delete(uri);
+		}
+	});
+});
+
+suite('Capataz nested system markers', () => {
+	test('marker deletion and restoration rebuild nested boundary diagnostics', async function () {
+		this.timeout(20000);
+		const root = vscode.workspace.workspaceFolders?.[0]?.uri;
+		assert.ok(root);
+		const project = editorFs(root), config = await readConfig(project);
+		const base = 'src/Systems/MarkerTestGroup/Legacy';
+		const marker = `${base}/system.json`, client = `${base}/Client/Entry.luau`;
+		const configUri = vscode.Uri.joinPath(root, 'capataz.config.json');
+		const clientUri = vscode.Uri.joinPath(root, client);
+		const waitFor = async (predicate: () => boolean) => {
+			const deadline = Date.now() + 6000;
+			while (!predicate() && Date.now() < deadline) { await new Promise(resolve => setTimeout(resolve, 50)); }
+			assert.ok(predicate(), 'Expected marker-triggered diagnostic update');
+		};
+		try {
+			await project.write(marker, '{}');
+			await project.write(`${base}/Server/Target.luau`, 'return {}');
+			await project.write(client, 'local r = require(game:GetService("ReplicatedStorage").Import)(script)\nreturn r("@Systems/MarkerTestGroup/Legacy/Server/Target")');
+			await generate(project, config);
+			await waitFor(() => vscode.languages.getDiagnostics(clientUri).some(d => d.source === 'Capataz' && d.code === 'cross-boundary'));
+			await project.remove(marker);
+			await waitFor(() => vscode.languages.getDiagnostics(configUri).some(d => d.source === 'Capataz' && d.message.includes('system.json')));
+			await project.write(marker, '{}');
+			await waitFor(() => !vscode.languages.getDiagnostics(configUri).some(d => d.source === 'Capataz'));
+			assert.ok(vscode.languages.getDiagnostics(clientUri).some(d => d.code === 'cross-boundary'));
+		} finally {
+			await project.remove('src/Systems/MarkerTestGroup');
+			await generate(project, config);
+		}
+	});
+});
+
+suite('Capataz project targets', () => {
+	test('labels shared-file errors by place and rebuilds after project edits', async function () {
+		this.timeout(20000);
+		const root = vscode.workspace.workspaceFolders?.[0]?.uri; assert.ok(root);
+		const configUri = vscode.Uri.joinPath(root, 'capataz.config.json');
+		const original = await vscode.workspace.fs.readFile(configUri);
+		const folder = vscode.Uri.joinPath(root, 'target-test');
+		const source = vscode.Uri.joinPath(folder, 'Use.luau');
+		const project = (target: boolean) => JSON.stringify({ tree: { $className: 'DataModel', ReplicatedStorage: { $className: 'ReplicatedStorage', Use: { $path: 'Use.luau' }, ...(target ? { Target: { $path: 'Target.luau' } } : {}) } } });
+		const errors = () => vscode.languages.getDiagnostics(source).filter(d => d.source === 'Capataz');
+		const waitFor = async (predicate: () => boolean) => {
+			const deadline = Date.now() + 6000;
+			while (!predicate() && Date.now() < deadline) { await new Promise(resolve => setTimeout(resolve, 50)); }
+			assert.ok(predicate(), JSON.stringify(errors()));
+		};
+		try {
+			await vscode.workspace.fs.createDirectory(folder);
+			await vscode.workspace.fs.writeFile(source, Buffer.from('return require(game:GetService("ReplicatedStorage").Target)'));
+			await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(folder, 'Target.luau'), Buffer.from('return {}'));
+			await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(folder, 'lobby.project.json'), Buffer.from(project(false)));
+			await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(folder, 'match.project.json'), Buffer.from(project(true)));
+			const config = JSON.parse(Buffer.from(original).toString('utf8'));
+			config.lint = { ...config.lint, targets: { lobby: { projectFile: 'target-test/lobby.project.json' }, match: { projectFile: 'target-test/match.project.json' } } };
+			await vscode.workspace.fs.writeFile(configUri, Buffer.from(JSON.stringify(config)));
+			await vscode.commands.executeCommand('capataz.check');
+			await waitFor(() => errors().length === 1 && errors()[0].message.startsWith('[lobby]'));
+			await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(folder, 'lobby.project.json'), Buffer.from(project(true)));
+			await waitFor(() => errors().length === 0);
+			await vscode.workspace.fs.writeFile(vscode.Uri.joinPath(folder, 'match.project.json'), Buffer.from(project(false)));
+			await waitFor(() => errors().length === 1 && errors()[0].message.startsWith('[match]'));
+			delete config.lint.targets.match;
+			await vscode.workspace.fs.writeFile(configUri, Buffer.from(JSON.stringify(config)));
+			await waitFor(() => errors().length === 0);
+		} finally {
+			await vscode.workspace.fs.writeFile(configUri, original);
+			await vscode.workspace.fs.delete(folder, { recursive: true });
+			await vscode.commands.executeCommand('capataz.check');
 		}
 	});
 });

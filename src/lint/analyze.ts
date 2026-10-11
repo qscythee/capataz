@@ -3,11 +3,11 @@ import { isDeepStrictEqual } from 'node:util';
 import { ModuleInfo, ProjectIndex, normalize, resolveCustom, resolveNative } from './index';
 import { Token, tokenize } from './tokens';
 
-export interface Diagnostic { file: string; line: number; column: number; length: number; endLine: number; endColumn: number; code: string; severity: 'error' | 'warning'; message: string; target?: string }
-export interface Dependency { file: string; target?: string; specifier: string; line: number; column: number; custom: boolean }
+export interface Diagnostic { lintTarget?: string; file: string; line: number; column: number; length: number; endLine: number; endColumn: number; code: string; severity: 'error' | 'warning'; message: string; target?: string }
+export interface Dependency { lintTarget?: string; file: string; target?: string; specifier: string; line: number; column: number; custom: boolean }
 export interface Analysis { diagnostics: Diagnostic[]; dependencies: Dependency[] }
 
-export type Value = { kind: 'opaque' | 'nil' | 'number' | 'function' | 'builtin' | 'unknown' | 'native' | 'factory' | 'custom' | 'requirer' | 'game' | 'instance' | 'string' | 'boolean' | 'table' | 'method' | 'union'; text?: string; fields?: Record<string, Value>; receiver?: Value; roots?: Record<string, string>; alternatives?: Value[]; caseSensitive?: boolean; unverified?: boolean; resolver?: Value; routes?: Value; parameters?: string[]; body?: Token[]; captures?: Map<string, Value>[]; dynamicRoots?: string[]; owner?: ModuleInfo };
+export type Value = { kind: 'opaque' | 'nil' | 'number' | 'function' | 'builtin' | 'unknown' | 'native' | 'factory' | 'custom' | 'requirer' | 'game' | 'instance' | 'string' | 'boolean' | 'table' | 'method' | 'union'; text?: string; fields?: Record<string, Value>; receiver?: Value; roots?: Record<string, string>; alternatives?: Value[]; caseSensitive?: boolean; unverified?: boolean; resolver?: Value; routes?: Value; systemRoots?: Value; parameters?: string[]; body?: Token[]; captures?: Map<string, Value>[]; dynamicRoots?: string[]; owner?: ModuleInfo };
 export interface EvaluationContext {
 	runtime: 'Client' | 'Server';
 	exportOf(module: ModuleInfo): Value;
@@ -73,7 +73,7 @@ class Reader {
 				const resolver = args[0]?.fields?.RootResolver;
 				const unverified = !ancestors || !!resolver && resolver.kind !== 'function' && resolver.kind !== 'nil' || !!caseOption && caseOption.kind !== 'boolean';
 				if (unverified) { this.report(token, 'dynamic-requirer', 'CustomRequirer configuration cannot be fully resolved statically; use statically known Ancestors or declare a factory override.', 'warning', undefined, endToken); }
-				return { kind: 'factory', roots, caseSensitive: caseOption?.text === 'true', unverified, resolver, routes: args[0]?.fields?.ServiceRoutes, dynamicRoots: Object.entries(ancestors ?? {}).filter(([, root]) => root.kind !== 'instance').map(([alias]) => alias.toLowerCase()) };
+				return { kind: 'factory', roots, caseSensitive: caseOption?.text === 'true', unverified, resolver, routes: args[0]?.fields?.ServiceRoutes, systemRoots: args[0]?.fields?.SystemRoots, dynamicRoots: Object.entries(ancestors ?? {}).filter(([, root]) => root.kind !== 'instance').map(([alias]) => alias.toLowerCase()) };
 			}
 			return unknown;
 		}
@@ -104,7 +104,7 @@ class Reader {
 			return unknown;
 		}
 		this.result.dependencies.push({ file: this.caller.file, target: target?.file, specifier, line: token.line, column: token.column, custom: value.kind === 'custom' });
-		if (!target) { this.report(token, 'unresolved-require', `Cannot resolve ${value.kind === 'custom' ? 'custom import' : 'require'} '${specifier}' in the generated Rojo tree.`, 'error', undefined, endToken); return unknown; }
+		if (!target) { this.report(token, 'unresolved-require', `Cannot resolve ${value.kind === 'custom' ? 'custom import' : 'require'} '${specifier}' in the project's Roblox tree.`, 'error', undefined, endToken); return unknown; }
 		if (!target.module) { this.report(token, 'not-module', `'${specifier}' resolves to a Script/LocalScript, not a ModuleScript.`, 'error', target.file, endToken); }
 		const from = this.caller.side, to = target.side;
 		if (from === 'Client' && /^(ServerScriptService|ServerStorage)\//.test(target.instance) && to !== 'Server') {
@@ -114,7 +114,7 @@ class Reader {
 		} else if (from && to && (from === 'Shared' ? to !== 'Shared' : to !== from && to !== 'Shared')) {
 			this.report(token, 'cross-boundary', `${from} code cannot require ${to} code: '${specifier}'.${from === 'Client' && to === 'Server' ? ' This WILL error at runtime.' : ''}`, 'error', target.file, endToken);
 		}
-				if (target.file === 'src/Core/Shared/CustomRequirer/init.luau') { return { kind: 'requirer' }; }
+				if (target.instance === 'ReplicatedStorage/Core/Shared/CustomRequirer' || this.index.config.lint?.requirerModules?.includes(target.file)) { return { kind: 'requirer' }; }
 		return this.context?.exportOf(target) ?? unknown;
 	}
 	evaluateFunction(fn: Value, args: Value[]): Value[] {
@@ -132,11 +132,28 @@ class Reader {
 		const [alias, ...parts] = specifier.slice(1).split('/');
 		let roots = value.roots ?? {};
 		let redirected: string | undefined;
-		const route = alias.toLowerCase() === 'systems' ? value.routes?.fields?.[parts[1]?.toLowerCase()] : undefined;
+		let route: Value | undefined, routeIndex = 1;
+		if (value.systemRoots && !['table', 'nil'].includes(value.systemRoots.kind)) { return { dynamic: true }; }
+		const rootRoutes = value.systemRoots?.fields?.[alias.toLowerCase()];
+		if (rootRoutes && rootRoutes.kind !== 'table') { return { dynamic: true }; }
+		if (rootRoutes || alias.toLowerCase() === 'systems') {
+			for (let i = 1; i < parts.length; i++) {
+				const candidate = (rootRoutes ?? value.routes)?.fields?.[parts[i].toLowerCase()];
+				if (!candidate) { continue; }
+				const systems = candidate.fields?.Systems, prefix = parts.slice(0, i).join('/');
+				if (systems && systems.kind !== 'table' && systems.kind !== 'nil') { return { dynamic: true }; }
+				const matches = systems?.kind === 'table'
+					? (value.caseSensitive === false
+						? Object.entries(systems.fields ?? {}).some(([name, enabled]) => enabled.text === 'true' && name.toLowerCase() === prefix.toLowerCase())
+						: systems.fields?.[prefix]?.text === 'true')
+					: i === 1;
+				if (matches) { route = candidate; routeIndex = i; break; }
+			}
+		}
 		if (value.routes && value.routes.kind !== 'table' && value.routes.kind !== 'nil') { return { dynamic: true }; }
 		if (route) {
 			if (route.fields?.Service?.kind !== 'string' || route.fields?.Name?.kind !== 'string') { return { dynamic: true }; }
-			redirected = route.fields.Service.text + '/Systems'; parts[1] = route.fields.Name.text!;
+			redirected = route.fields.Service.text + '/' + (route.fields.Root?.text ?? 'Systems'); parts[routeIndex] = route.fields.Name.text!;
 		} else if (value.resolver && value.resolver.kind !== 'nil') {
 			const result = this.evaluateFunction(value.resolver, [{ kind: 'string', text: alias }, { kind: 'table', fields: Object.fromEntries(parts.map((part, i) => [String(i + 1), { kind: 'string', text: part } as Value])) }, { kind: 'instance', text: value.text }]);
 			if (result[0]?.kind === 'instance') {

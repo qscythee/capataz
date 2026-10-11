@@ -7,29 +7,29 @@ local CustomRequirer = require(ReplicatedStorage.Core.Shared.CustomRequirer)
 local SystemRoutes = require(ReplicatedStorage.Core.Shared.CustomRequirer.SystemRoutes)
 
 local ancestors: { [string]: Instance } = {
-   Core = ReplicatedStorage.Core,
-   Systems = ReplicatedStorage.Systems,
+	Core = ReplicatedStorage.Core,
+	Systems = ReplicatedStorage.Systems,
 }
 
 if not RunService:IsClient() then
-   local ServerScriptService = game:GetService("ServerScriptService")
+	local ServerScriptService = game:GetService("ServerScriptService")
 
-   -- capataz-ignore dynamic-requirer: canonical Import factory routes server aliases.
-   return CustomRequirer.new({
-      Ancestors = ancestors,
-      ServiceRoutes = SystemRoutes,
-      CaseSensitive = true,
-      RootResolver = function(alias: string, segments: { string }, _context: Instance): (Instance?, number?)
-         if string.lower(alias) == "core" and string.lower(segments[1] or "") == "server" then
-            return ServerScriptService.Core.Server, 1
-         end
-         return nil
-      end,
-   })
+	-- capataz-ignore dynamic-requirer: canonical Import factory routes server aliases.
+	return CustomRequirer.new({
+		Ancestors = ancestors,
+		ServiceRoutes = SystemRoutes,
+		CaseSensitive = true,
+		RootResolver = function(alias: string, segments: { string }, _context: Instance): (Instance?, number?)
+			if string.lower(alias) == "core" and string.lower(segments[1] or "") == "server" then
+				return ServerScriptService.Core.Server, 1
+			end
+			return nil
+		end,
+	})
 end
 
 return CustomRequirer.new({
-   Ancestors = ancestors,
-   ServiceRoutes = SystemRoutes,
-   CaseSensitive = true,
+	Ancestors = ancestors,
+	ServiceRoutes = SystemRoutes,
+	CaseSensitive = true,
 })

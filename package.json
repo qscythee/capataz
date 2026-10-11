@@ -2,7 +2,7 @@
   "name": "capataz",
   "displayName": "Capataz",
   "description": "Feature-based Systems management for Rojo projects. Opt-in by adding a capataz.config.json at the workspace root.",
-  "version": "0.0.7",
+  "version": "0.1.0",
   "publisher": "qscythee",
   "license": "MIT",
   "author": "qscythee",
@@ -84,12 +84,12 @@
       "explorer/context": [
         {
           "command": "capataz.newSystem",
-          "when": "explorerResourceIsFolder && resourceFilename == Systems",
+          "when": "explorerResourceIsFolder && resourcePath in capataz.systemGroups",
           "group": "capataz"
         },
         {
           "command": "capataz.deleteSystem",
-          "when": "explorerResourceIsFolder && resourcePath =~ /[\\/]Systems[\\/][^\\/]+$/",
+          "when": "explorerResourceIsFolder && resourcePath in capataz.systemFolders",
           "group": "capataz"
         }
       ]

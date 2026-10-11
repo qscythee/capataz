@@ -1,3 +1,4 @@
+import { registerSystemContexts } from './systemContexts';
 import * as vscode from 'vscode';
 import { runInit } from './commands/init';
 import { runGenerateProject } from './commands/generateProject';
@@ -10,11 +11,12 @@ export function activate(context: vscode.ExtensionContext) {
 	const outputChannel = vscode.window.createOutputChannel('Capataz');
 	context.subscriptions.push(outputChannel);
 	registerDiagnostics(context, outputChannel);
+	registerSystemContexts(context);
 
 	context.subscriptions.push(
-		vscode.commands.registerCommand('capataz.init', () => runInit(outputChannel, context.extensionUri)),
+		vscode.commands.registerCommand('capataz.init', (uri?: vscode.Uri) => runInit(outputChannel, context.extensionUri, uri)),
 		vscode.commands.registerCommand('capataz.generateProject', () => runGenerateProject(outputChannel)),
-		vscode.commands.registerCommand('capataz.newSystem', () => runNewSystem(outputChannel)),
+		vscode.commands.registerCommand('capataz.newSystem', (uri?: vscode.Uri) => runNewSystem(outputChannel, uri)),
 		vscode.commands.registerCommand('capataz.deleteSystem', (uri?: vscode.Uri) => runDeleteSystem(outputChannel, uri)),
 	);
 }

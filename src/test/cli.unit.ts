@@ -112,7 +112,7 @@ test('configured system routes generate service mounts and appear in system list
 	const project = JSON.parse(await fs.readFile(path.join(root, 'default.project.json'), 'utf8'));
 	assert.equal(project.tree.ReplicatedFirst.Systems.LoaderSystem.Bootstrap.$path, 'src/Systems/LoaderSystem/bootstrap');
 	const routes = await fs.readFile(path.join(root, 'src/Core/Shared/CustomRequirer/SystemRoutes.luau'), 'utf8');
-	assert.match(routes, /\["bootstrap"\] = \{ Service = "ReplicatedFirst", Name = "Bootstrap" \}/);
+	assert.match(routes, /\["bootstrap"\] = \{ Service = "ReplicatedFirst", Name = "Bootstrap", Systems = systems \}/);
 	const systems = JSON.parse(run(root, 'system', 'list', '--format', 'json').stdout);
 	assert.deepEqual(systems.find((system: { name: string }) => system.name === 'LoaderSystem').parts, ['Bootstrap']);
 });
@@ -170,4 +170,85 @@ test('malformed config and invalid flags report structured errors', async t => {
 	const result = run(root, 'check', '--format=json'); assert.equal(result.status, 2); assert.ok(JSON.parse(result.stdout).error);
 	assert.equal(run(root, 'graph', '--format', 'csv').status, 2);
 	assert.equal(run(root, 'check', '--dry-run').status, 2);
+});
+
+test('nested CLI paths preserve sibling systems and reject group removal', async t => {
+	const root = await fixture(t);
+	assert.equal(run(root, 'init').status, 0);
+	assert.equal(run(root, 'system', 'new', 'Player/PlayerController', '--dry-run').status, 0);
+	await assert.rejects(fs.stat(path.join(root, 'src/Systems/Player')));
+	assert.equal(run(root, 'system', 'new', 'Player/PlayerController').status, 0);
+	assert.equal(run(root, 'system', 'new', 'Player/Inventory').status, 0);
+	assert.equal(run(root, 'system', 'new', 'Players/First/Only').status, 0);
+	assert.equal(run(root, 'system', 'remove', 'Players/First/Only', '--yes').status, 0);
+	assert.equal(run(root, 'system', 'remove', 'Player', '--yes').status, 2);
+	const list = JSON.parse(run(root, 'system', 'list', '--format', 'json').stdout);
+	assert.ok(list.some((s: {name: string}) => s.name === 'Player/PlayerControllerSystem'));
+	assert.equal(run(root, 'system', 'remove', 'Player/PlayerController', '--yes').status, 0);
+	assert.ok(await fs.stat(path.join(root, 'src/Systems/Player/InventorySystem')));
+	await fs.mkdir(path.join(root, 'src/Systems/Player/Legacy/Shared'), { recursive: true });
+	await fs.writeFile(path.join(root, 'src/Systems/Player/Legacy/system.json'), '{}');
+	assert.equal(run(root, 'system', 'remove', 'Player/Legacy', '--yes').status, 0);
+	assert.equal(run(root, 'project', 'check').status, 0);
+});
+
+test('configured filenames appear in CLI output and explicit watch targets validate before watching', async t => {
+	const root = await fixture(t);
+	assert.equal(run(root, 'init').status, 0);
+	const configPath = path.join(root, 'capataz.config.json');
+	const config = JSON.parse(await fs.readFile(configPath, 'utf8'));
+	config.projectFile = 'game.project.json';
+	await fs.writeFile(configPath, JSON.stringify(config));
+	const generated = run(root, 'project', 'generate', '--format', 'json');
+	assert.equal(generated.status, 0, generated.stderr);
+	assert.equal(JSON.parse(generated.stdout).file, 'game.project.json');
+	assert.equal(run(root, 'system', 'new', 'Player/PlayerController').status, 0);
+	const tree = JSON.parse(await fs.readFile(path.join(root, 'game.project.json'), 'utf8')).tree;
+	assert.ok(tree.ReplicatedStorage.Systems.Player.PlayerControllerSystem);
+	assert.equal(run(root, 'project', 'check').status, 0);
+	const missing = run(root, 'watch', 'missing.project.json');
+	assert.equal(missing.status, 2);
+	assert.match(missing.stderr, /does not exist/);
+	assert.equal(run(root, 'watch', 'one.project.json', 'two.project.json').status, 2);
+});
+
+test('project-file overrides target mutation output without changing the default', async t => {
+	const root = await fixture(t);
+	assert.equal(run(root, 'init').status, 0);
+	const original = await fs.readFile(path.join(root, 'default.project.json'), 'utf8');
+	const config = await fs.readFile(path.join(root, 'capataz.config.json'), 'utf8');
+	const selected = 'places/lobby.project.json';
+	const invoke = (...args: string[]) => run(root, ...args, '--project-file', selected);
+	assert.equal(invoke('system', 'new', 'Player/Controller', '--dry-run').status, 0);
+	await assert.rejects(fs.stat(path.join(root, selected)));
+	assert.equal(invoke('system', 'new', 'Player/Controller').status, 0);
+	let generated = JSON.parse(await fs.readFile(path.join(root, selected), 'utf8'));
+	assert.equal(generated.tree.ReplicatedStorage.Systems.Player.ControllerSystem.Client.$path, '../src/Systems/Player/ControllerSystem/Client');
+	assert.equal(invoke('project', 'check').status, 0);
+	assert.equal(invoke('system', 'remove', 'Player/Controller', '--yes').status, 0);
+	generated = JSON.parse(await fs.readFile(path.join(root, selected), 'utf8'));
+	assert.equal(generated.tree.ReplicatedStorage.Systems.Player, undefined);
+	assert.equal(invoke('project', 'generate').status, 0);
+	assert.equal(invoke('init').status, 0);
+	assert.equal(await fs.readFile(path.join(root, 'default.project.json'), 'utf8'), original);
+	assert.equal(await fs.readFile(path.join(root, 'capataz.config.json'), 'utf8'), config);
+	assert.equal(run(root, 'system', 'new', 'Invalid', '--project-file', '../outside.project.json').status, 2);
+	await assert.rejects(fs.stat(path.join(root, 'src/Systems/InvalidSystem')));
+	assert.equal(invoke('check').status, 2);
+	assert.equal(invoke('watch').status, 2);
+});
+
+test('init adopts a selected nested project with correctly rebased mounts', async t => {
+	const root = await fixture(t);
+	await fs.mkdir(path.join(root, 'places'), { recursive: true });
+	await fs.writeFile(path.join(root, 'places/lobby.project.json'), JSON.stringify({ name: 'Lobby', tree: { $className: 'DataModel', Workspace: { $path: '../world' } } }));
+	const result = run(root, 'init', '--project-file', 'places/lobby.project.json');
+	assert.equal(result.status, 0, result.stderr);
+	const config = JSON.parse(await fs.readFile(path.join(root, 'capataz.config.json'), 'utf8'));
+	assert.equal(config.projectFile, 'places/lobby.project.json');
+	assert.equal(config.project.tree.Workspace.$path, 'world');
+	const project = JSON.parse(await fs.readFile(path.join(root, 'places/lobby.project.json'), 'utf8'));
+	assert.equal(project.name, 'Lobby');
+	assert.equal(project.tree.Workspace.$path, '../world');
+	await assert.rejects(fs.stat(path.join(root, 'default.project.json')));
 });
