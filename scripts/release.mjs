@@ -67,7 +67,7 @@ run('npm', ['run', 'compile']);
 run('npm', ['run', 'test:unit']);
 if (doExt) { run('npm', ['test']); }
 
-if (!dryRun) {
+if (!dryRun && next !== current) {
 	writeFileSync('package.json', readFileSync('package.json', 'utf8').replace(/("version":\s*")[^"]+/, `$1${next}`));
 	try {
 		const lock = JSON.parse(readFileSync('package-lock.json', 'utf8'));
@@ -79,7 +79,9 @@ if (!dryRun) {
 
 if (doExt) { run('npx', ['vsce', 'publish', '--no-dependencies'], { mutates: true }); }
 run('git', ['add', 'package.json', 'package-lock.json'], { mutates: true });
-run('git', ['commit', '-m', `release: ${labels[target]} ${next}`, '-m', 'Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>'], { mutates: true });
+if (next !== current) {
+	run('git', ['commit', '-m', `release: ${labels[target]} ${next}`, '-m', 'Co-authored-by: Copilot <223556219+Copilot@users.noreply.github.com>'], { mutates: true });
+}
 for (const tag of tags) { run('git', ['tag', tag], { mutates: true }); }
 run('git', ['push', 'origin', branch, ...tags], { mutates: true });
 
